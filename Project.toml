@@ -1,0 +1,19 @@
+name = "OptimizationVariableInterface"
+uuid = "f1c3d78e-8b2a-4c9d-9e4f-4a7b6c0d3e17"
+version = "0.1.0"
+authors = ["Oliver Woodford"]
+
+[deps]
+Static = "aedffcd0-7271-4cad-89d0-dc628f76c6d3"
+StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
+
+[compat]
+Static = "0.8.7, 1"
+StaticArrays = "1"
+julia = "1.10"
+
+[extras]
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Test"]

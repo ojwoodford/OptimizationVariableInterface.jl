@@ -3,7 +3,7 @@ module OptimizationVariableInterface
 using Static, StaticArrays
 
 export nvars, update, update!, copyvars, syncvars!, isbitsvartype
-export EuclideanVector, DynamicVector, ZeroToInfScalar, ZeroToOneScalar
+export ZeroToInfScalar, ZeroToOneScalar
 
 SR(first, last) = StaticArrays.SUnitRange(dynamic(first), dynamic(last))
 
@@ -78,20 +78,6 @@ end
 end
 
 # 4. Built-in variable types
-"""
-    EuclideanVector{N, T}
-
-Alias for `SVector{N, T}` representing a fixed-length `N`-dimensional Euclidean vector variable.
-"""
-const EuclideanVector{N, T} = SVector{N, T}
-
-"""
-    DynamicVector{T}
-
-Alias for `Vector{T}` representing a runtime-sized Euclidean vector variable.
-"""
-const DynamicVector{T} = Vector{T}
-
 """
     ZeroToInfScalar(val)
 

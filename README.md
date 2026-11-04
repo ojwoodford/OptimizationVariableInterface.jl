@@ -1,10 +1,13 @@
 # OptimizationVariableInterface.jl
 
+[![Build Status](https://github.com/ojwoodford/OptimizationVariableInterface.jl/actions/workflows/CI.yml/badge.svg?branch=main)](https://github.com/ojwoodford/OptimizationVariableInterface.jl/actions/workflows/CI.yml?query=branch%3Amain)
+[![codecov](https://codecov.io/gh/ojwoodford/OptimizationVariableInterface.jl/branch/main/graph/badge.svg)](https://codecov.io/gh/ojwoodford/OptimizationVariableInterface.jl)
+
 Common variable and manifold retraction interface for nonlinear optimization in Julia.
 
 ## Overview
 
-`OptimizationVariableInterface.jl` defines the shared variable interface (`nvars`, `update`, `update!`, `copyvars`, `syncvars!`, `isbitsvartype`) along with default implementations for Euclidean scalars, fixed-length static vectors (`EuclideanVector`), dynamic vectors (`DynamicVector`), and bounded scalar manifolds (`ZeroToInfScalar`, `ZeroToOneScalar`).
+`OptimizationVariableInterface.jl` defines the shared variable interface (`nvars`, `update`, `update!`, `copyvars`, `syncvars!`, `isbitsvartype`) along with default implementations for Euclidean scalars (`Number`), static vectors (`StaticVector`), dynamic vectors (`Vector`), and bounded scalar manifolds (`ZeroToInfScalar`, `ZeroToOneScalar`).
 
 Custom manifold variable types only need to extend `OptimizationVariableInterface.nvars` and `OptimizationVariableInterface.update` to work seamlessly across optimization and modeling packages such as `SecondOrderOptimization.jl` and `NLLSModels.jl`.
 
@@ -48,22 +51,6 @@ Unified variable retraction used inside optimization loops:
 - For immutable variables (`Number`, `SVector`, `ZeroToInfScalar`, `ZeroToOneScalar`, or custom structs), returns `update(from, step)`.
 - For flat mutable `Vector{<:Number}`, updates `to[i] = from[i] + step[i]` in-place.
 - For a heterogeneous or homogeneous `Vector` of variable blocks, updates each block `to[i] = update(from[i], step, offset)` advancing `offset` by `nvars(from[i])`.
-
-### `EuclideanVector{N, T}`
-
-```julia
-const EuclideanVector{N, T} = SVector{N, T}
-```
-
-Fixed-length `N`-dimensional Euclidean vector variable alias.
-
-### `DynamicVector{T}`
-
-```julia
-const DynamicVector{T} = Vector{T}
-```
-
-Runtime-sized Euclidean vector variable alias.
 
 ### `ZeroToInfScalar{T}`
 

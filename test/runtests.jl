@@ -5,8 +5,8 @@ using OptimizationVariableInterface, Static, StaticArrays, Test
     @test nvars(2.5) === static(1)
     @test nvars(42) === static(1)
     @test nvars(SVector(1.0, 2.0, 3.0)) === static(3)
-    @test nvars(EuclideanVector{2, Float64}(1.0, 2.0)) === static(2)
-    @test nvars(DynamicVector{Float64}([1.0, 2.0, 3.0, 4.0])) == 4
+    @test nvars(SVector{2, Float64}(1.0, 2.0)) === static(2)
+    @test nvars([1.0, 2.0, 3.0, 4.0]) == 4
     @test nvars(ZeroToInfScalar(1.5)) === static(1)
     @test nvars(ZeroToOneScalar(0.5)) === static(1)
     @test nvars([SVector(1.0, 2.0), SVector(3.0, 4.0)]) == 4

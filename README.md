@@ -104,45 +104,46 @@ Optimization solvers use four core functions to manage state, allocate buffers, 
 - `update!(to, from, step)`: Retracts candidate variables along the tangent step.
 - `syncvars!(to, from)`: Synchronizes state when a step is accepted.
 
-### Example: A Minimal Manifold Gradient Descent Optimizer
+### Example: A Minimal Manifold Newton Optimizer
 
-Here is a complete, working example showing how an optimizer interacts with variables via the interface:
+Here is a complete, working example showing how a second-order optimizer interacts with variables via the interface. Notice how `nvars(x0)` is used to size and preallocate the tangent gradient vector and Hessian matrix:
 
 ```julia
 using OptimizationVariableInterface, LinearAlgebra
 
 """
-    manifold_gradient_descent(cost_and_grad, x0; max_iters=50, lr=0.2, tol=1e-5)
+    manifold_newton(fdf!, x0; max_iters=20, tol=1e-6)
 
-Optimizes problem state `x0` over an arbitrary manifold.
-`cost_and_grad(x)` returns `(cost, tangent_gradient)`.
+Optimizes problem state `x0` over an arbitrary manifold using Newton's method.
+`fdf!(H, g, x)` evaluates the objective and fills the tangent-space Hessian `H`
+and gradient `g` in-place.
 """
-function manifold_gradient_descent(cost_and_grad, x0; max_iters=50, lr=0.2, tol=1e-5)
-    # 1. Prepare variable buffers without unnecessary allocations
+function manifold_newton(fdf!, x0; max_iters=20, tol=1e-6)
+    # 1. Use nvars to preallocate tangent-space Hessian and gradient
+    n = dynamic(nvars(x0))
+    g = zeros(Float64, n)
+    H = zeros(Float64, n, n)
+
+    # 2. Allocate variable buffers without unnecessary allocations
     x = copyvars(x0)
     x_next = copyvars(x0)
 
     for iter in 1:max_iters
-        cost, grad = cost_and_grad(x)
-        if norm(grad) < tol
+        # Fill Hessian and gradient in-place in tangent space
+        cost = fdf!(H, g, x)
+        if norm(g) < tol
             break
         end
 
-        # Compute search direction in tangent space Rⁿ
-        step = -lr .* grad
+        # Solve Newton step in tangent space: H * step = -g
+        step = -(H \ g)
 
-        # 2. Retraction step: x_next = x ⊕ step
+        # 3. Retraction step: x_next = x ⊕ step
         # Always assign back: handles immutable structs and in-place vectors uniformly
         x_next = update!(x_next, x, step)
 
-        # Evaluate candidate step (simple acceptance criterion for demonstration)
-        cost_next, _ = cost_and_grad(x_next)
-        if cost_next < cost
-            # 3. Accept step: synchronize current state with candidate state
-            x = syncvars!(x, x_next)
-        else
-            break
-        end
+        # 4. Accept step: synchronize current state with candidate state
+        x = syncvars!(x, x_next)
     end
 
     return x
@@ -159,11 +160,18 @@ Because `update!`, `copyvars`, and `syncvars!` handle immutable and mutable type
 #### Running the Optimizer on `CircleAngle`:
 
 ```julia
-# Minimize f(θ) = (θ - π)²
-objective(a::CircleAngle) = (a.theta - pi)^2, [2 * (a.theta - pi)]
+# Minimize f(θ) = 1 - cos(θ - 1.0)
+# Tangent gradient: sin(θ - 1.0)
+# Tangent Hessian: cos(θ - 1.0)
+function cost_grad_hess!(H, g, a::CircleAngle)
+    d = a.theta - 1.0
+    g[1] = sin(d)
+    H[1, 1] = max(cos(d), 1e-4) # ensure positive curvature
+    return 1.0 - cos(d)
+end
 
-x_opt = manifold_gradient_descent(objective, CircleAngle(0.2))
-# Result: CircleAngle(3.14159...)
+x_opt = manifold_newton(cost_grad_hess!, CircleAngle(0.2))
+# Result: CircleAngle(1.0)
 ```
 
 ---

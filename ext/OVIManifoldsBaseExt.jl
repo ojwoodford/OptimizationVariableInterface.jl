@@ -30,7 +30,9 @@ function OptimizationVariableInterface.ManifoldVar(
 end
 
 # 2. nvars
-OptimizationVariableInterface.nvars(v::ManifoldVar) = ManifoldsBase.manifold_dimension(get_context(v).manifold)
+OptimizationVariableInterface.nvars(M::ManifoldsBase.AbstractManifold) = ManifoldsBase.manifold_dimension(M)
+OptimizationVariableInterface.nvars(::ManifoldsBase.DefaultManifold{𝔽, ManifoldsBase.TypeParameter{Tuple{N}}}) where {𝔽, N} = static(N)
+OptimizationVariableInterface.nvars(v::ManifoldVar) = OptimizationVariableInterface.nvars(get_context(v).manifold)
 
 # 3. update (out-of-place retraction)
 @inline function OptimizationVariableInterface.update(v::ManifoldVar{P}, step, start=1) where {P}

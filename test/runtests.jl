@@ -96,4 +96,6 @@ using OptimizationVariableInterface, Static, StaticArrays, Test
     @test dest_vec == [4.0, 5.0]
 end
 
-include("test_manifolds_base.jl")
+if Base.find_package("ManifoldsBase") !== nothing
+    include("test_manifolds_base.jl")
+end

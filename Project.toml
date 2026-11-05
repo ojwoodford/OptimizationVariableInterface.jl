@@ -8,12 +8,20 @@ Static = "aedffcd0-7271-4cad-89d0-dc628f76c6d3"
 StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 
 [compat]
+ManifoldsBase = "0.15"
 Static = "0.8.7, 1"
 StaticArrays = "1"
 julia = "1.10"
 
+[weakdeps]
+ManifoldsBase = "3362f125-f0bb-47a3-aa74-596ffd7ef2fb"
+
+[extensions]
+OVIManifoldsBaseExt = "ManifoldsBase"
+
 [extras]
+ManifoldsBase = "3362f125-f0bb-47a3-aa74-596ffd7ef2fb"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
-test = ["Test"]
+test = ["Test", "ManifoldsBase"]

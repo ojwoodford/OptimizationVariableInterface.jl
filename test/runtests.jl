@@ -95,3 +95,7 @@ using OptimizationVariableInterface, Static, StaticArrays, Test
     @test syncvars!(dest_vec, src_vec) === dest_vec
     @test dest_vec == [4.0, 5.0]
 end
+
+if Base.find_package("ManifoldsBase") !== nothing
+    include("test_manifolds_base.jl")
+end

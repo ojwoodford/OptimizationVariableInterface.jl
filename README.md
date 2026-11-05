@@ -176,6 +176,55 @@ x_opt = manifold_newton(cost_grad_hess!, CircleAngle(0.2))
 
 ---
 
+## ManifoldsBase.jl Integration (`OVIManifoldsBaseExt`)
+
+For working with Riemannian manifolds defined in [`ManifoldsBase.jl`](https://github.com/JuliaManifolds/ManifoldsBase.jl) (or [`Manifolds.jl`](https://github.com/JuliaManifolds/Manifolds.jl)), `OptimizationVariableInterface.jl` provides an official package extension:
+
+```julia
+using OptimizationVariableInterface, ManifoldsBase
+```
+
+### `ManifoldVar` & `ManifoldContext`
+
+`ManifoldVar` wraps any point on an `AbstractManifold`, bridging manifold retractions to numerical optimization step vectors:
+
+```julia
+# A 2D Sphere manifold embedded in ℝ³ (2 degrees of freedom)
+M = ManifoldsBase.DefaultManifold(3; parameter = :type)
+p = @SVector [1.0, 0.0, 0.0]
+
+# Wrap point with its manifold
+var = ManifoldVar(p, M)
+nvars(var) # 3 (intrinsic degrees of freedom)
+
+# Optimizer computes a 3D tangent step:
+step = [0.1, 0.2, -0.1]
+var_new = update(var, step)
+```
+
+### Zero Manifold Duplication: By-Value vs. By-Reference Storage
+
+When thousands of variables share the same manifold (e.g. camera poses or landmarks):
+- **By-Value (`byref = false`)**: For 0-byte singleton manifolds (`parameter = :type`) or small `isbits` manifolds ($\le 16$ bytes), the manifold context is stored directly inline with zero pointer indirection.
+- **By-Reference (`byref = true`)**: For larger or non-`isbits` manifolds, the manifold, basis, and retraction are bundled into a single `Base.RefValue`. Each variable stores **only one 8-byte pointer**, sharing the single heap-allocated manifold instance.
+
+The constructor automatically selects the optimal strategy (`byref = (!isbitstype(C) || sizeof(C) > 16)`), or you can specify it explicitly:
+
+```julia
+# Explicitly share a single context across 10,000 points:
+ctx = ManifoldContext(M; byref = true)
+vars = [ManifoldVar(points[i], ctx) for i in 1:10000]
+
+# All variables share the exact same context reference:
+vars[1].context === vars[2].context # true
+
+# copyvars creates new scratch buffers without deepcopying the shared manifold:
+vars_copy = copyvars(vars)
+vars_copy[1].context === ctx # true
+```
+
+---
+
 ## Built-in Variable Types
 
 The package includes default implementations for standard types as well as common bounded scalar manifolds:
@@ -185,8 +234,9 @@ The package includes default implementations for standard types as well as commo
 | `Number` | `static(1)` | Standard scalar addition: $x + \Delta x$ |
 | `StaticVector{N}` | `static(N)` | Vector addition with `StaticArrays.jl` |
 | `Vector{<:Number}` | `length(v)` | In-place vector addition |
-| `ZeroToInfScalar{T}(val)` | `static(1)` | Constrained to $(0, \infty)$ via multiplicative exponential map: x \cdot e^{\Delta x}$ |
+| `ZeroToInfScalar{T}(val)` | `static(1)` | Constrained to $(0, \infty)$ via multiplicative exponential map: $x \cdot e^{\Delta x}$ |
 | `ZeroToOneScalar{T}(val)` | `static(1)` | Constrained to $(0, 1)$ via logistic-exponential retraction |
+| `ManifoldVar{P, C}` | `manifold_dimension(M)` | Retracts point along tangent vector via `get_vector` and `retract` |
 
 ---
 

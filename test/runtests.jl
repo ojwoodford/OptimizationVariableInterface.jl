@@ -95,3 +95,5 @@ using OptimizationVariableInterface, Static, StaticArrays, Test
     @test syncvars!(dest_vec, src_vec) === dest_vec
     @test dest_vec == [4.0, 5.0]
 end
+
+include("test_manifolds_base.jl")

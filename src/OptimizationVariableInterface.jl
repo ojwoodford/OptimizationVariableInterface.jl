@@ -4,6 +4,7 @@ using Static, StaticArrays
 
 export nvars, update, update!, copyvars, syncvars!, isbitsvartype
 export ZeroToInfScalar, ZeroToOneScalar
+export ManifoldVar, ManifoldContext
 
 SR(first, last) = StaticArrays.SUnitRange(dynamic(first), dynamic(last))
 
@@ -133,5 +134,38 @@ function syncvars!(to::Vector, from::Vector)
     copyto!(to, from)
     return to
 end
+
+# 6. Manifold variable wrappers (methods defined in extension OVIManifoldsBaseExt)
+"""
+    ManifoldContext(manifold, basis, retraction)
+
+Bundles a manifold, tangent basis, and retraction method for a manifold variable.
+When `ManifoldsBase` is loaded, constructors accepting an `AbstractManifold` are provided,
+supporting both by-value storage (for small isbits manifolds) and by-reference storage
+(via `Base.RefValue`) for larger or non-isbits manifolds.
+"""
+struct ManifoldContext{M, B, R}
+    manifold::M
+    basis::B
+    retraction::R
+end
+
+"""
+    ManifoldVar(point, context)
+
+Variable wrapper for a point on a manifold, with associated manifold, basis, and retraction context.
+When `ManifoldsBase` is loaded, constructors accepting an `AbstractManifold` are provided:
+`ManifoldVar(point, manifold; basis=..., retraction=..., byref=...)`.
+"""
+struct ManifoldVar{P, C}
+    point::P
+    context::C
+end
+
+Base.convert(::Type{ManifoldVar{P, C}}, v::ManifoldVar) where {P, C} =
+    ManifoldVar{P, C}(convert(P, v.point), convert(C, v.context))
+
+@inline get_context(v::ManifoldVar{P, <:ManifoldContext}) where P = v.context
+@inline get_context(v::ManifoldVar{P, <:Base.RefValue}) where P = v.context[]
 
 end # module OptimizationVariableInterface

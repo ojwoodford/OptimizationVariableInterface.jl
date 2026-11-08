@@ -53,6 +53,28 @@ using OptimizationVariableInterface, Static, StaticArrays, Test
     @test nvars(c_stat) === static(2)
     @test update(c_stat, [0.0, 0.5, -0.5], 2).data === SVector(1.5, 1.5)
 
+    # StaticVector of OVI variables
+    svec_ovi = SVector(ZeroToInfScalar(1.0), ZeroToInfScalar(2.0))
+    @test nvars(svec_ovi) === static(2)
+    svec_ovi_upd = update(svec_ovi, SVector(log(2.0), log(3.0)))
+    @test svec_ovi_upd[1].val ≈ 2.0 && svec_ovi_upd[2].val ≈ 6.0
+    svec_ovi_upd2 = update(svec_ovi, [99.0, log(2.0), log(3.0)], 2)
+    @test svec_ovi_upd2[1].val ≈ 2.0 && svec_ovi_upd2[2].val ≈ 6.0
+    @test (@allocated update(svec_ovi, SVector(0.1, 0.2))) == 0
+
+    svec_stat = SVector(c_stat, c_stat)
+    @test nvars(svec_stat) === static(4)
+    svec_stat_upd = update(svec_stat, SVector(0.5, -0.5, 1.0, 2.0))
+    @test svec_stat_upd[1].data === SVector(1.5, 1.5)
+    @test svec_stat_upd[2].data === SVector(2.0, 4.0)
+    @test (@allocated update(svec_stat, SVector(0.5, -0.5, 1.0, 2.0))) == 0
+
+    # Heterogeneous StaticVector
+    svec_hetero = SVector(ZeroToInfScalar(1.0), ZeroToOneScalar(0.5))
+    @test nvars(svec_hetero) === static(2)
+    svec_hetero_upd = update(svec_hetero, SVector(log(3.0), 0.0))
+    @test svec_hetero_upd[1].val ≈ 3.0 && svec_hetero_upd[2].val ≈ 0.5
+
     # ZeroToInfScalar
     s_pos = ZeroToInfScalar(2.0)
     @test update(s_pos, [0.0]).val ≈ 2.0

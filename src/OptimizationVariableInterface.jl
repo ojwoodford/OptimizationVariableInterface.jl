@@ -25,7 +25,8 @@ nvars(zeros(5)) # 5
 """
 nvars(x) = length(x)
 nvars(::Number) = static(1)
-nvars(::StaticVector{N}) where N = static(N)
+nvars(::StaticVector{N, <:Number}) where N = static(N)
+@inline nvars(vars::StaticVector) = sum(nvars, Tuple(vars); init=static(0))
 nvars(vars::Vector) = sum(x -> Int(dynamic(nvars(x))), vars; init=0)
 nvars(vars::Vector{<:Number}) = length(vars)
 
@@ -45,7 +46,30 @@ x_new = update(x, step)
 ```
 """
 update(var::Number, step, start=1) = var + @inbounds(step[start])
-update(var::StaticVector{N}, step::StaticVector{N}) where N = var + step
+update(var::StaticVector{N, <:Number}, step::StaticVector{N, <:Number}) where N = var + step
+
+@generated function update(vars::StaticVector{N}, step, start=1) where N
+    if N == 0
+        return :(vars)
+    end
+    exprs = Symbol[Symbol("u_", i) for i in 1:N]
+    stmts = Expr[]
+    offset_expr = :(start)
+    for i in 1:N
+        u_i = exprs[i]
+        push!(stmts, :($u_i = update(vars[$i], step, $offset_expr)))
+        offset_expr = :($offset_expr + dynamic(nvars(vars[$i])))
+    end
+    types_expr = Expr(:call, :promote_type, [:(typeof($u)) for u in exprs]...)
+    tuple_expr = Expr(:tuple, exprs...)
+    return quote
+        $(Expr(:meta, :inline))
+        $(stmts...)
+        T = $types_expr
+        return similar_type(vars, T)($tuple_expr)
+    end
+end
+
 @inline function update(var, step, start=1)
     N = nvars(var)
     rng = N isa StaticInt ? (SR(0, dynamic(N) - 1) .+ start) : (start:(start + dynamic(N) - 1))

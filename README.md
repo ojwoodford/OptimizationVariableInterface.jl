@@ -20,7 +20,7 @@ $$x_{k+1} = \mathcal{R}_x(\Delta x)$$
 2. **Zero-overhead & allocation-friendly**: Built for high performance, supporting compile-time static dimensions (`Static.jl`, `StaticArrays.jl`), allocation-free scratch buffers, and unified handling of both mutable arrays and immutable structs.
 3. **Composable variable blocks**: Automatically handles heterogeneous collections of variable blocks (e.g. camera poses, 3D landmarks, calibration parameters) as a single composite state.
 
-Packages such as [`SecondOrderOptimization.jl`](https://github.com/ojwoodford/SecondOrderOptimization.jl) and [`NLLSModels.jl`](https://github.com/ojwoodford/NLLSModels.jl) build upon this interface.
+Packages such as [`SecondOrderOptimization.jl`](https://github.com/ojwoodford/SecondOrderOptimization.jl) and [`NLLSModel.jl`](https://github.com/ojwoodford/NLLSModel.jl) build upon this interface.
 
 ---
 

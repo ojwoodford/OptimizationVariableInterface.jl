@@ -13,6 +13,8 @@ SR(first, last) = StaticArrays.SUnitRange(dynamic(first), dynamic(last))
     nvars(v) -> StaticInt or Int
 
 Returns the intrinsic number of degrees of freedom (tangent-space dimension) of a variable or collection of variables.
+Falls back to `Base.length(v)` for custom types and generic arrays.
+For `StaticVector` and `Vector` collections of variable blocks, returns the sum of their individual degrees of freedom.
 
 # Example
 ```julia
@@ -21,6 +23,7 @@ using OptimizationVariableInterface, StaticArrays
 nvars(1.0) # static(1)
 nvars(@SVector [1.0, 2.0, 3.0]) # static(3)
 nvars(zeros(5)) # 5
+nvars(SVector(ZeroToInfScalar(1.0), ZeroToInfScalar(2.0))) # static(2)
 ```
 """
 nvars(x) = length(x)
@@ -35,6 +38,8 @@ nvars(vars::Vector{<:Number}) = length(vars)
     update(var, step, start=1) -> newvar
 
 Computes out-of-place retraction of `var` along tangent vector `step[start:start+nvars(var)-1]`.
+Falls back to `var + @inbounds(view(step, ...))` using `Base.:+` if not explicitly defined.
+For `StaticVector` collections of variable blocks, unrolls retraction across each block with zero allocations.
 
 # Example
 ```julia

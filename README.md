@@ -64,13 +64,23 @@ update(angle, [pi]) # CircleAngle(3.14159...)
 > **Why the `start` argument?**
 > In optimization algorithms with multiple variables, the tangent step $\Delta x$ is computed as a single concatenated vector. The solver passes the variable's slice offset via `start`, avoiding intermediate allocations.
 
+### Fallback for Types with `Base.length` and `Base.:+`
+
+If your custom variable type uses standard vector addition for its update, you don't even need to depend on or import `OptimizationVariableInterface.jl`! Any type implementing standard Julia methods:
+- `Base.length(x)`
+- `Base.:+(x, step::AbstractVector)`
+
+automatically works out of the box with the default fallbacks `nvars(x) = length(x)` and `update(var, step, start=1) = var + view(step, ...)`. You only need to explicitly define `OptimizationVariableInterface.nvars(::MyType) = static(N)` if you wish to provide a compile-time static dimension for static linear solvers, or `update` if your retraction is non-additive.
+
 ---
 
 ## 2. Using Blocks of Heterogeneous Variables
 
 Real-world optimization problems often involve composite states with different variable types—for example, a camera angle ($S^1$), a 2D Euclidean translation ($\mathbb{R}^2$), and a positive scale parameter ($\mathbb{R}^+$).
 
-`OptimizationVariableInterface.jl` supports collections of variables out of the box:
+`OptimizationVariableInterface.jl` supports collections of variables out of the box in both dynamic (`Vector`) and compile-time static (`StaticVector` / `SVector`) forms:
+
+### Dynamic Collections (`Vector`)
 
 ```julia
 using OptimizationVariableInterface, StaticArrays
@@ -91,6 +101,23 @@ update!(vars_next, vars, step)
 # vars_next[1] is CircleAngle(0.1)
 # vars_next[2] is SVector(1.5, 1.5)
 # vars_next[3] is ZeroToInfScalar(2.0)
+```
+
+### Static Collections (`SVector`) with Zero Heap Allocations
+
+When all variable blocks have compile-time static sizes, they can be grouped in an `SVector`. `nvars` constant-folds across the blocks to return a `StaticInt`, and `update` unrolls elementwise retraction with **zero heap allocations**:
+
+```julia
+# Static composite state: two bounded positive scalars
+svec = SVector(ZeroToInfScalar(1.0), ZeroToInfScalar(2.0))
+
+# Compile-time static dimension: static(1) + static(1) = static(2)
+nvars(svec) # static(2)
+
+# Unrolled retraction across blocks (0 allocations):
+svec_next = update(svec, SVector(log(2.0), log(3.0)))
+# svec_next[1] is ZeroToInfScalar(2.0)
+# svec_next[2] is ZeroToInfScalar(6.0)
 ```
 
 ---
@@ -232,11 +259,14 @@ The package includes default implementations for standard types as well as commo
 | Type | Tangent Dim (`nvars`) | Retraction Behavior |
 | :--- | :--- | :--- |
 | `Number` | `static(1)` | Standard scalar addition: $x + \Delta x$ |
-| `StaticVector{N}` | `static(N)` | Vector addition with `StaticArrays.jl` |
+| `StaticVector{N, <:Number}` | `static(N)` | Direct vector addition with `StaticArrays.jl` |
+| `StaticVector{N, T}` | $\sum \text{nvars}$ (`StaticInt` if static) | Unrolled block retraction across elements (0 heap allocations) |
 | `Vector{<:Number}` | `length(v)` | In-place vector addition |
+| `Vector{T}` (blocks) | $\sum \text{nvars}$ | Block retraction across elements |
 | `ZeroToInfScalar{T}(val)` | `static(1)` | Constrained to $(0, \infty)$ via multiplicative exponential map: $x \cdot e^{\Delta x}$ |
 | `ZeroToOneScalar{T}(val)` | `static(1)` | Constrained to $(0, 1)$ via logistic-exponential retraction |
 | `ManifoldVar{P, C}` | `manifold_dimension(M)` | Retracts point along tangent vector via `get_vector` and `retract` |
+| Fallback `Any` | `length(x)` | Retracts via `x + @inbounds(view(step, ...))` |
 
 ---
 
@@ -244,8 +274,8 @@ The package includes default implementations for standard types as well as commo
 
 | Method | Role | Invariant / Behavior |
 | :--- | :--- | :--- |
-| `nvars(x)` | Tangent dimension | Returns `StaticInt` or `Int` indicating intrinsic degrees of freedom. |
-| `update(var, step, start=1)` | Out-of-place retraction | Returns new variable instance retracted along `step[start : start+nvars(var)-1]`. |
+| `nvars(x)` | Tangent dimension | Returns `StaticInt` or `Int` indicating intrinsic degrees of freedom. Falls back to `Base.length(x)`. |
+| `update(var, step, start=1)` | Out-of-place retraction | Returns new variable instance retracted along `step[start : start+nvars(var)-1]`. Falls back to `var + @inbounds(view(step, ...))` using `Base.:+`. |
 | `update!(to, from, step)` | Unified / in-place retraction | Mutates `to` in-place for `Vector`s; returns `update(from, step)` for immutables. Always use as `to = update!(to, from, step)`. |
 | `copyvars(x)` | Buffer allocation | Returns `x` for immutables (0 allocations); returns shallow `copy` for `isbits` element vectors; `deepcopy` otherwise. |
 | `syncvars!(to, from)` | State synchronization | Copies elements in-place for mutable `Vector`s; returns `from` for immutables. Always use as `to = syncvars!(to, from)`. |

@@ -23,10 +23,11 @@ nvars(@SVector [1.0, 2.0, 3.0]) # static(3)
 nvars(zeros(5)) # 5
 ```
 """
+nvars(x) = length(x)
 nvars(::Number) = static(1)
 nvars(::StaticVector{N}) where N = static(N)
-nvars(v::AbstractVector{<:Number}) = length(v)
-nvars(vars::AbstractVector) = sum(x -> Int(dynamic(nvars(x))), vars; init=0)
+nvars(vars::Vector) = sum(x -> Int(dynamic(nvars(x))), vars; init=0)
+nvars(vars::Vector{<:Number}) = length(vars)
 
 # 2. Out-of-place variable update: update(var, step, start=1) -> newvar
 """
@@ -45,10 +46,10 @@ x_new = update(x, step)
 """
 update(var::Number, step, start=1) = var + @inbounds(step[start])
 update(var::StaticVector{N}, step::StaticVector{N}) where N = var + step
-update(var::StaticVector{N}, step, start=1) where N =
-    var + @inbounds(view(step, SR(0, N - 1) .+ start))
-function update(var::Vector{T}, step, start=1) where {T<:Number}
-    return var + @inbounds(view(step, start:start - 1 + length(var)))
+@inline function update(var, step, start=1)
+    N = nvars(var)
+    rng = N isa StaticInt ? (SR(0, dynamic(N) - 1) .+ start) : (start:(start + dynamic(N) - 1))
+    return var + @inbounds(view(step, rng))
 end
 
 # 3. In-place / unified retraction: update!(to, from, step) -> to

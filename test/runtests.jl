@@ -14,6 +14,15 @@ using OptimizationVariableInterface, Static, StaticArrays, Test
     @test nvars(Float64[]) == 0
     @test nvars(Any[]) == 0
 
+    # Custom AbstractVector where elements are not sub-variables
+    struct CustomVectorParam <: AbstractVector{String}
+        data::Vector{String}
+    end
+    Base.size(cv::CustomVectorParam) = size(cv.data)
+    Base.getindex(cv::CustomVectorParam, i::Int) = cv.data[i]
+    @test nvars(CustomVectorParam(["a", "b", "c"])) == 3
+    @test nvars(view([1.0, 2.0, 3.0, 4.0], 1:3)) == 3
+
     # 2. update (out-of-place)
     @test update(3.0, [0.5, 1.5]) == 3.5
     @test update(3.0, [0.5, 1.5], 2) == 4.5
@@ -22,6 +31,27 @@ using OptimizationVariableInterface, Static, StaticArrays, Test
     @test update(v_static, [10.0, 0.5, -0.5], 2) === SVector(1.5, 1.5)
     v_dyn = [1.0, 2.0, 3.0]
     @test update(v_dyn, [0.0, 10.0, 20.0, 30.0], 2) == [11.0, 22.0, 33.0]
+
+    # Custom types implementing only Base.length and Base.:+
+    struct CustomAddVar
+        data::Vector{Float64}
+    end
+    Base.length(v::CustomAddVar) = length(v.data)
+    Base.:+(v::CustomAddVar, s::AbstractVector) = CustomAddVar(v.data + s)
+
+    struct CustomStaticAddVar
+        data::SVector{2, Float64}
+    end
+    OptimizationVariableInterface.nvars(::CustomStaticAddVar) = static(2)
+    Base.:+(v::CustomStaticAddVar, s::AbstractVector) = CustomStaticAddVar(v.data + s)
+
+    c_dyn = CustomAddVar([1.0, 2.0])
+    @test nvars(c_dyn) == 2
+    @test update(c_dyn, [0.0, 10.0, 20.0], 2).data == [11.0, 22.0]
+
+    c_stat = CustomStaticAddVar(SVector(1.0, 2.0))
+    @test nvars(c_stat) === static(2)
+    @test update(c_stat, [0.0, 0.5, -0.5], 2).data === SVector(1.5, 1.5)
 
     # ZeroToInfScalar
     s_pos = ZeroToInfScalar(2.0)

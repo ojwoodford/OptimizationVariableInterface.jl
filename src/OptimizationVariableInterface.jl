@@ -2,7 +2,7 @@ module OptimizationVariableInterface
 
 using Static, StaticArrays
 
-export nvars, update, update!, copyvars, syncvars!, isbitsvartype
+export nvars, update, update!, copyvars, syncvars!, isbitsvartype, iseliminable
 export ZeroToInfScalar, ZeroToOneScalar
 export ManifoldVar, ManifoldContext
 
@@ -197,5 +197,22 @@ Base.convert(::Type{ManifoldVar{P, C}}, v::ManifoldVar) where {P, C} =
 
 @inline get_context(v::ManifoldVar{P, <:ManifoldContext}) where P = v.context
 @inline get_context(v::ManifoldVar{P, <:Base.RefValue}) where P = v.context[]
+
+# 8. Eliminable trait for Schur complement marginalization
+"""
+    iseliminable(::Type{V}) -> StaticBool
+
+Returns `static(true)` if variable type `V` is structurally eligible for Schur complement elimination
+(marginalization in bipartite factor graphs like Bundle Adjustment / SLAM).
+Defaults to `static(false)`.
+
+# Example
+```julia
+struct Landmark3D; x::SVector{3, Float64}; end
+OptimizationVariableInterface.iseliminable(::Type{<:Landmark3D}) = static(true)
+```
+"""
+iseliminable(::Type) = static(false)
+iseliminable(x) = iseliminable(typeof(x))
 
 end # module OptimizationVariableInterface

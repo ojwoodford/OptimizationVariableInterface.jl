@@ -151,6 +151,15 @@ using OptimizationVariableInterface, Static, StaticArrays, Test
     src_vec = [4.0, 5.0]
     @test syncvars!(dest_vec, src_vec) === dest_vec
     @test dest_vec == [4.0, 5.0]
+
+    # 7. iseliminable trait
+    @test iseliminable(Float64) === static(false)
+    @test iseliminable(1.0) === static(false)
+    @test iseliminable(SVector(1.0, 2.0, 3.0)) === static(false)
+    struct CustomPoint3D; x::SVector{3, Float64}; end
+    OptimizationVariableInterface.iseliminable(::Type{<:CustomPoint3D}) = static(true)
+    @test iseliminable(CustomPoint3D) === static(true)
+    @test iseliminable(CustomPoint3D(SVector(1.0, 2.0, 3.0))) === static(true)
 end
 
 if Base.find_package("ManifoldsBase") !== nothing

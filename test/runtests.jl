@@ -14,6 +14,15 @@ using OptimizationVariableInterface, Static, StaticArrays, Test
     @test nvars(Float64[]) == 0
     @test nvars(Any[]) == 0
 
+    # Custom AbstractVector where elements are not sub-variables
+    struct CustomVectorParam <: AbstractVector{String}
+        data::Vector{String}
+    end
+    Base.size(cv::CustomVectorParam) = size(cv.data)
+    Base.getindex(cv::CustomVectorParam, i::Int) = cv.data[i]
+    @test nvars(CustomVectorParam(["a", "b", "c"])) == 3
+    @test nvars(view([1.0, 2.0, 3.0, 4.0], 1:3)) == 3
+
     # 2. update (out-of-place)
     @test update(3.0, [0.5, 1.5]) == 3.5
     @test update(3.0, [0.5, 1.5], 2) == 4.5
@@ -22,6 +31,54 @@ using OptimizationVariableInterface, Static, StaticArrays, Test
     @test update(v_static, [10.0, 0.5, -0.5], 2) === SVector(1.5, 1.5)
     v_dyn = [1.0, 2.0, 3.0]
     @test update(v_dyn, [0.0, 10.0, 20.0, 30.0], 2) == [11.0, 22.0, 33.0]
+
+    # Custom types implementing only Base.length and Base.:+
+    struct CustomAddVar
+        data::Vector{Float64}
+    end
+    Base.length(v::CustomAddVar) = length(v.data)
+    Base.:+(v::CustomAddVar, s::AbstractVector) = CustomAddVar(v.data + s)
+
+    struct CustomStaticAddVar
+        data::SVector{2, Float64}
+    end
+    OptimizationVariableInterface.nvars(::CustomStaticAddVar) = static(2)
+    Base.:+(v::CustomStaticAddVar, s::AbstractVector) = CustomStaticAddVar(v.data + s)
+
+    c_dyn = CustomAddVar([1.0, 2.0])
+    @test nvars(c_dyn) == 2
+    @test update(c_dyn, [0.0, 10.0, 20.0], 2).data == [11.0, 22.0]
+
+    c_stat = CustomStaticAddVar(SVector(1.0, 2.0))
+    @test nvars(c_stat) === static(2)
+    @test update(c_stat, [0.0, 0.5, -0.5], 2).data === SVector(1.5, 1.5)
+
+    # StaticVector of OVI variables
+    allocs_update(v, s) = @allocated update(v, s)
+    svec_ovi = SVector(ZeroToInfScalar(1.0), ZeroToInfScalar(2.0))
+    @test nvars(svec_ovi) === static(2)
+    svec_ovi_upd = update(svec_ovi, SVector(log(2.0), log(3.0)))
+    @test svec_ovi_upd[1].val ≈ 2.0 && svec_ovi_upd[2].val ≈ 6.0
+    svec_ovi_upd2 = update(svec_ovi, [99.0, log(2.0), log(3.0)], 2)
+    @test svec_ovi_upd2[1].val ≈ 2.0 && svec_ovi_upd2[2].val ≈ 6.0
+    @test allocs_update(svec_ovi, SVector(0.1, 0.2)) == 0
+
+    svec_stat = SVector(c_stat, c_stat)
+    @test nvars(svec_stat) === static(4)
+    svec_stat_upd = update(svec_stat, SVector(0.5, -0.5, 1.0, 2.0))
+    @test svec_stat_upd[1].data === SVector(1.5, 1.5)
+    @test svec_stat_upd[2].data === SVector(2.0, 4.0)
+    @test allocs_update(svec_stat, SVector(0.5, -0.5, 1.0, 2.0)) == 0
+
+    # Heterogeneous StaticVector
+    svec_hetero = SVector(ZeroToInfScalar(1.0), ZeroToOneScalar(0.5))
+    @test nvars(svec_hetero) === static(2)
+    svec_hetero_upd = update(svec_hetero, SVector(log(3.0), 0.0))
+    @test svec_hetero_upd[1].val ≈ 3.0 && svec_hetero_upd[2].val ≈ 0.5
+
+    # 0-length StaticVector
+    svec_0 = SVector{0, ZeroToInfScalar{Float64}}()
+    @test update(svec_0, Float64[]) === svec_0
 
     # ZeroToInfScalar
     s_pos = ZeroToInfScalar(2.0)

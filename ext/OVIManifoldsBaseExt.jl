@@ -47,8 +47,12 @@ OptimizationVariableInterface.nvars(v::ManifoldVar) = OptimizationVariableInterf
     end
     X = ManifoldsBase.get_vector(M, v.point, coords, ctx.basis)
     p_ret = ManifoldsBase.retract(M, v.point, X, ctx.retraction)
-    p_new = p_ret isa P ? p_ret : convert(P, p_ret)
-    return ManifoldVar{P, typeof(v.context)}(p_new, v.context)
+    p_new = if eltype(p_ret) === eltype(P)
+        p_ret isa P ? p_ret : convert(P, p_ret)
+    else
+        p_ret
+    end
+    return ManifoldVar(p_new, v.context)
 end
 
 # 4. update! (unified retraction)

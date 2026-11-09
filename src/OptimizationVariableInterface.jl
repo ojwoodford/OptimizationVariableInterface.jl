@@ -13,6 +13,8 @@ SR(first, last) = StaticArrays.SUnitRange(dynamic(first), dynamic(last))
     nvars(v) -> StaticInt or Int
 
 Returns the intrinsic number of degrees of freedom (tangent-space dimension) of a variable or collection of variables.
+Falls back to `Base.length(v)` for custom types and generic arrays.
+For `StaticVector` and `Vector` collections of variable blocks, returns the sum of their individual degrees of freedom.
 
 # Example
 ```julia
@@ -21,18 +23,23 @@ using OptimizationVariableInterface, StaticArrays
 nvars(1.0) # static(1)
 nvars(@SVector [1.0, 2.0, 3.0]) # static(3)
 nvars(zeros(5)) # 5
+nvars(SVector(ZeroToInfScalar(1.0), ZeroToInfScalar(2.0))) # static(2)
 ```
 """
+nvars(x) = length(x)
 nvars(::Number) = static(1)
-nvars(::StaticVector{N}) where N = static(N)
-nvars(v::AbstractVector{<:Number}) = length(v)
-nvars(vars::AbstractVector) = sum(x -> Int(dynamic(nvars(x))), vars; init=0)
+nvars(::StaticVector{N, <:Number}) where N = static(N)
+@inline nvars(vars::StaticVector) = sum(nvars, Tuple(vars); init=static(0))
+nvars(vars::Vector) = sum(x -> Int(dynamic(nvars(x))), vars; init=0)
+nvars(vars::Vector{<:Number}) = length(vars)
 
 # 2. Out-of-place variable update: update(var, step, start=1) -> newvar
 """
     update(var, step, start=1) -> newvar
 
 Computes out-of-place retraction of `var` along tangent vector `step[start:start+nvars(var)-1]`.
+Falls back to `var + @inbounds(view(step, ...))` using `Base.:+` if not explicitly defined.
+For `StaticVector` collections of variable blocks, unrolls retraction across each block with zero allocations.
 
 # Example
 ```julia
@@ -44,11 +51,34 @@ x_new = update(x, step)
 ```
 """
 update(var::Number, step, start=1) = var + @inbounds(step[start])
-update(var::StaticVector{N}, step::StaticVector{N}) where N = var + step
-update(var::StaticVector{N}, step, start=1) where N =
-    var + @inbounds(view(step, SR(0, N - 1) .+ start))
-function update(var::Vector{T}, step, start=1) where {T<:Number}
-    return var + @inbounds(view(step, start:start - 1 + length(var)))
+update(var::StaticVector{N, <:Number}, step::StaticVector{N, <:Number}) where N = var + step
+
+@generated function update(vars::StaticVector{N}, step, start=1) where N
+    if N == 0
+        return :(vars)
+    end
+    exprs = Symbol[Symbol("u_", i) for i in 1:N]
+    stmts = Expr[]
+    offset_expr = :(start)
+    for i in 1:N
+        u_i = exprs[i]
+        push!(stmts, :($u_i = update(vars[$i], step, $offset_expr)))
+        offset_expr = :($offset_expr + dynamic(nvars(vars[$i])))
+    end
+    types_expr = Expr(:call, :promote_type, [:(typeof($u)) for u in exprs]...)
+    tuple_expr = Expr(:tuple, exprs...)
+    return quote
+        $(Expr(:meta, :inline))
+        $(stmts...)
+        T = $types_expr
+        return similar_type(vars, T)($tuple_expr)
+    end
+end
+
+@inline function update(var, step, start=1)
+    N = nvars(var)
+    rng = N isa StaticInt ? (SR(0, dynamic(N) - 1) .+ start) : (start:(start + dynamic(N) - 1))
+    return var + @inbounds(view(step, rng))
 end
 
 # 3. In-place / unified retraction: update!(to, from, step) -> to
@@ -62,7 +92,7 @@ For mutable vectors (either flat `Vector{<:Number}` or `Vector` of variable bloc
 @inline update!(to, from, step::AbstractVector) = update(from, step)
 
 @inline function update!(to::Vector{T}, from::Vector{T}, step::AbstractVector) where {T<:Number}
-    @inbounds @simd for i in eachindex(to, from, step)
+    @inbounds for i in eachindex(to, from, step)
         to[i] = from[i] + step[i]
     end
     return to

@@ -92,7 +92,7 @@ For mutable vectors (either flat `Vector{<:Number}` or `Vector` of variable bloc
 @inline update!(to, from, step::AbstractVector) = update(from, step)
 
 @inline function update!(to::Vector{T}, from::Vector{T}, step::AbstractVector) where {T<:Number}
-    @inbounds @simd for i in eachindex(to, from, step)
+    @inbounds for i in eachindex(to, from, step)
         to[i] = from[i] + step[i]
     end
     return to

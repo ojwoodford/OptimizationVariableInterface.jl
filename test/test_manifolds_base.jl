@@ -20,6 +20,16 @@ using ManifoldsBase
     v_type_new = update(v_type, step)
     @test v_type_new.point ≈ SVector(1.1, 2.2, 2.7)
 
+    # Retraction with different element type (e.g. BigFloat hitting line 53)
+    v_type_big = update(v_type, BigFloat[0.1, 0.2, -0.3])
+    @test eltype(v_type_big.point) === BigFloat
+    @test v_type_big.point ≈ SVector(1.1, 2.2, 2.7)
+
+    # Convert ManifoldVar
+    v_type_conv = convert(ManifoldVar{Vector{Float64}, typeof(v_type.context)}, v_type)
+    @test v_type_conv.point isa Vector{Float64}
+    @test v_type_conv.point ≈ [1.0, 2.0, 3.0]
+
     # Offset update with StaticInt dimension
     v_type_offset = update(v_type, [10.0, 0.1, 0.2, -0.3], 2)
     @test v_type_offset.point ≈ SVector(1.1, 2.2, 2.7)
@@ -35,6 +45,11 @@ using ManifoldsBase
     # Small isbits context <= 16 bytes defaults to byref = false
     v_auto_small = ManifoldVar(p_static, M_type)
     @test v_auto_small.context isa ManifoldContext
+
+    # Large context > 16 bytes defaults to byref = true
+    M_large = ManifoldsBase.DefaultManifold(2, 3, 4; parameter = :field)
+    v_large = ManifoldVar(zeros(2, 3, 4), M_large)
+    @test v_large.context isa Base.RefValue
 
     # Explicit byref = true
     v_ref = ManifoldVar(p_static, M_type; byref = true)

@@ -146,6 +146,17 @@ using OptimizationVariableInterface, Static, StaticArrays, Test
     dyncopy = copyvars(dynvars)
     @test dyncopy == dynvars && dyncopy !== dynvars && dyncopy[1] !== dynvars[1]
 
+    # Mutable non-Vector arrays are copied; immutable ones are not
+    mat = [1.0 2.0; 3.0 4.0]
+    matcopy = copyvars(mat)
+    @test matcopy == mat && matcopy !== mat
+    mv = MVector(1.0, 2.0)
+    @test copyvars(mv) == mv && copyvars(mv) !== mv
+    @test syncvars!(zeros(2, 2), mat) isa Matrix
+    mdest = zeros(2, 2)
+    @test syncvars!(mdest, mat) === mdest && mdest == mat
+    @test syncvars!(MVector(0.0, 0.0), mv) isa MVector
+
     # syncvars! on Vector
     dest_vec = [0.0, 0.0]
     src_vec = [4.0, 5.0]

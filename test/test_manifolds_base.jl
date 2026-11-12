@@ -1,6 +1,8 @@
 using OptimizationVariableInterface, Static, StaticArrays, Test
 using ManifoldsBase
 
+eye3() = [1.0 0.0 0.0; 0.0 1.0 0.0; 0.0 0.0 1.0]
+
 @testset "OVIManifoldsBaseExt" begin
     # 1. Zero-byte singleton manifold (parameter = :type)
     M_type = ManifoldsBase.DefaultManifold(3; parameter = :type)
@@ -155,4 +157,27 @@ using ManifoldsBase
     @test mixed_to[2].val ≈ 4.0
     @test mixed_to[3] === SVector(1.1, 1.9)
     @test mixed_to[4].point ≈ SVector(0.2, 1.2, 0.2)
+
+    # 10. Regression: immutable-point single ManifoldVar syncvars! must return the source
+    sync_to = ManifoldVar(SVector(0.0, 0.0, 0.0), M_type)
+    sync_from = ManifoldVar(SVector(1.0, 2.0, 3.0), M_type)
+    @test syncvars!(sync_to, sync_from) === sync_from
+
+    # 11. Regression: Matrix points must not alias in copyvars / trial steps
+    M_mat = ManifoldsBase.DefaultManifold(3, 3)
+    xm = ManifoldVar(eye3(), M_mat)
+    trial = copyvars(xm)
+    @test trial.point == xm.point && trial.point !== xm.point
+    update!(trial, xm, fill(0.5, 9))
+    @test xm.point == eye3()          # original intact after the (rejected) trial
+    @test trial.point != xm.point
+    best = copyvars(xm)
+    syncvars!(best, trial)
+    @test best.point == trial.point && best.point !== trial.point
+    # Vector of Matrix-point variables
+    xs = [ManifoldVar(eye3(), M_mat) for _ in 1:2]
+    ts = copyvars(xs)
+    @test all(ts[i].point !== xs[i].point for i in 1:2)
+    update!(ts, xs, fill(0.5, 18))
+    @test all(xs[i].point == eye3() for i in 1:2)
 end

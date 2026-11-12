@@ -149,17 +149,24 @@ isbitsvartype(T) = false
 
 Returns a copy of `vars` suitable as a scratch buffer:
 - For immutable variables, returns `vars` itself (0 allocations).
+- For a mutable `AbstractArray` (e.g. `Matrix`, `MVector`), returns `copy(vars)`.
 - For a `Vector{T}`, uses shallow `copy(vars)` when `isbitsvartype(T)` is `true` and `deepcopy(vars)` otherwise.
 """
 copyvars(x) = x
+copyvars(x::AbstractArray) = ismutable(x) ? copy(x) : x
 copyvars(vars::Vector{T}) where T = isbitsvartype(T) ? copy(vars) : deepcopy(vars)
 
 """
     syncvars!(to, from) -> to
 
-Synchronizes variable buffer `to` with `from`. Returns `from` for immutable variables or copies elements in-place for `Vector`s.
+Synchronizes variable buffer `to` with `from`. Returns `from` for immutable variables or copies elements in-place for mutable arrays.
 """
 syncvars!(to, from) = from
+function syncvars!(to::AbstractArray, from::AbstractArray)
+    ismutable(to) || return from
+    copyto!(to, from)
+    return to
+end
 function syncvars!(to::Vector, from::Vector)
     copyto!(to, from)
     return to

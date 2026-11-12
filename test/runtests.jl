@@ -1,4 +1,4 @@
-using OptimizationVariableInterface, Static, StaticArrays, Test
+using OptimizationVariableInterface, Static, StaticArrays, Test, ForwardDiff
 
 @testset "OptimizationVariableInterface.jl" begin
     # 1. nvars
@@ -123,6 +123,51 @@ using OptimizationVariableInterface, Static, StaticArrays, Test
     end
     @test isnan(update(s_unit, [NaN]).val)                   # B4
     @test isbitstype(typeof(s_unit)) && isbitstype(typeof(s_pos))
+
+    # BoundedReal
+    br = BoundedReal(2.0, 1.0, 5.0)
+    @test nvars(br) === static(1) && isbitstype(typeof(br))
+    @test br.val ≈ 2.0 && br.lo == 1.0 && br.hi == 5.0
+    for v in (-3.0, 1.5, 1.0 + 1e-9, 4.999, 0.0)
+        @test BoundedReal(v, -3.0, 5.0).val ≈ v rtol=1e-8 atol=1e-12
+    end
+    for step in (-1e3, -50.0, -1.0, 0.0, 1.0, 50.0, 1e3)
+        r = update(br, [step])
+        @test 1.0 <= r.val <= 5.0 && r.lo == 1.0 && r.hi == 5.0
+    end
+    @test update(br, [1e3]).val > 4.999 && update(br, [-1e3]).val < 1.001
+    @test update(update(br, [1e3]), [-1e3]).val ≈ 2.0        # not stuck
+    @test update(br, [0.7], 1).val ≈ update(br, [9.0, 0.7], 2).val
+    # accuracy near hi when |hi| >> hi - lo
+    bt = BoundedReal(1e6 + 0.5, 1e6, 1e6 + 1)
+    @test bt.val ≈ 1e6 + 0.5
+    bt2 = update(bt, [30.0])
+    @test disthi(bt2) ≈ exp(-30) rtol=1e-9
+    @test distlo(bt2) + disthi(bt2) ≈ 1.0
+    @test bt2.val <= 1e6 + 1
+    # clamping of out-of-range / endpoint values
+    @test 1.0 < BoundedReal(0.0, 1.0, 5.0).val < 5.0 && isfinite(BoundedReal(0.0, 1.0, 5.0).logit)
+    @test 1.0 < BoundedReal(5.0, 1.0, 5.0).val < 5.0 && isfinite(BoundedReal(5.0, 1.0, 5.0).logit)
+    @test_throws ArgumentError BoundedReal(0.5, 1.0, 1.0)
+    @test_throws ArgumentError BoundedReal(0.5, 2.0, 1.0)
+    @test_throws ArgumentError BoundedReal(0.5, 0.0, Inf)
+    @test BoundedReal(1, 0, 2).val ≈ 1.0                      # integer input
+    @test isnan(update(br, [NaN]).val)
+    # ForwardDiff: dual T with Float64 B constructs, infers concretely, and has the right derivative
+    f(d) = update(br, [d]).val
+    p_ = (br.val - br.lo) / (br.hi - br.lo)
+    @test ForwardDiff.derivative(f, 0.0) ≈ (br.hi - br.lo) * p_ * (1 - p_)
+    D = ForwardDiff.Dual{Nothing, Float64, 1}
+    @test (@inferred update(br, [D(0.0, ForwardDiff.Partials((1.0,)))])) isa BoundedReal{D, Float64}
+    # ZeroToOneScalar/ZeroToInfScalar autodiff
+    @test ForwardDiff.derivative(d -> update(s_unit, [d]).val, 0.0) ≈ 0.25
+    @test ForwardDiff.derivative(d -> update(s_unit, [d]).comp, 0.0) ≈ -0.25
+    @test ForwardDiff.derivative(d -> update(s_pos, [d]).val, 0.0) ≈ 2.0
+    # Heterogeneous static vector with BoundedReal
+    sv_b = SVector(br, ZeroToInfScalar(1.0))
+    @test nvars(sv_b) === static(2)
+    sv_b2 = update(sv_b, SVector(0.0, log(2.0)))
+    @test sv_b2[1].val ≈ 2.0 && sv_b2[2].val ≈ 2.0
 
     # 3. update! (in-place / unified)
     # Immutable fallback

@@ -3,7 +3,8 @@ module OptimizationVariableInterface
 using Static, StaticArrays
 
 export nvars, update, update!, copyvars, syncvars!, isbitsvartype, iseliminable
-export ZeroToInfScalar, ZeroToOneScalar
+export ZeroToInfScalar, ZeroToOneScalar, BoundedReal
+export distlo, disthi
 export ManifoldVar, ManifoldContext
 
 SR(first, last) = StaticArrays.SUnitRange(dynamic(first), dynamic(last))
@@ -171,6 +172,53 @@ function ZeroToOneScalar(p::Real)   # clamped to the open interval
 end
 nvars(::ZeroToOneScalar) = static(1)
 update(var::ZeroToOneScalar, updatevec, start=1) = ZeroToOneScalar(var.logit + @inbounds(updatevec[start]), Val(:logit))
+
+"""
+    BoundedReal(val, lo, hi)
+
+Scalar variable bounded to the open interval `(lo, hi)` (finite `lo < hi`), using the same logit
+state as [`ZeroToOneScalar`](@ref): `val = lo + (hi - lo)·p` with `p = logistic(logit)`.
+`val` is cached and measured from the nearer bound, so it stays accurate and strictly inside the
+interval. The bounds `lo` and `hi` are fields (never optimized, copied unchanged by [`update`](@ref)).
+
+Note that the bounds are never reached, and the derivative of `val` with respect to the step is
+`(hi - lo)·p(1 - p)`, so an optimum on a bound is approached slowly rather than becoming active.
+"""
+struct BoundedReal{T, B <: Real}
+    logit::T   # state: z, p = logistic(z)
+    val::T     # cached lo + (hi - lo)·p
+    lo::B
+    hi::B
+    function BoundedReal{T, B}(z::T, lo::B, hi::B) where {T, B <: Real}
+        p, q = _logistic_pair(z)
+        w = hi - lo
+        val = p <= q ? lo + w * p : hi - w * q   # measure from the nearer bound
+        return new{T, B}(z, val, lo, hi)
+    end
+end
+BoundedReal(z::T, lo::B, hi::B, ::Val{:logit}) where {T, B <: Real} = BoundedReal{T, B}(z, lo, hi)
+function BoundedReal(val::Real, lo::Real, hi::Real)
+    lo, hi = promote(float(lo), float(hi))
+    (isfinite(lo) && isfinite(hi) && lo < hi) || throw(ArgumentError("need finite lo < hi, got ($lo, $hi)"))
+    v = _clampnan(float(val), nextfloat(lo), prevfloat(hi))   # open interval
+    return BoundedReal(log(v - lo) - log(hi - v), lo, hi, Val(:logit))   # separate logs: no cancellation
+end
+nvars(::BoundedReal) = static(1)
+update(v::BoundedReal, δ, start=1) = BoundedReal(v.logit + @inbounds(δ[start]), v.lo, v.hi, Val(:logit))
+
+"""
+    distlo(v::BoundedReal), disthi(v::BoundedReal)
+
+Accurate distance from `v.val` to the lower / upper bound, computed from the logit (one `exp` per call).
+"""
+function distlo(v::BoundedReal)
+    p, _ = _logistic_pair(v.logit)
+    return (v.hi - v.lo) * p
+end
+function disthi(v::BoundedReal)
+    _, q = _logistic_pair(v.logit)
+    return (v.hi - v.lo) * q
+end
 
 # 5. Scratch buffer allocation & syncing
 """

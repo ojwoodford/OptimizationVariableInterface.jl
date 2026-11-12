@@ -216,18 +216,20 @@ using OptimizationVariableInterface, ManifoldsBase
 `ManifoldVar` wraps any point on an `AbstractManifold`, bridging manifold retractions to numerical optimization step vectors:
 
 ```julia
-# A 2D Sphere manifold embedded in ℝ³ (2 degrees of freedom)
+# A flat 3-dimensional manifold (3 degrees of freedom); any `AbstractManifold` works
 M = ManifoldsBase.DefaultManifold(3; parameter = :type)
 p = @SVector [1.0, 0.0, 0.0]
 
 # Wrap point with its manifold
 var = ManifoldVar(p, M)
-nvars(var) # 3 (intrinsic degrees of freedom)
+nvars(var) # static(3) (intrinsic degrees of freedom, always a compile-time constant)
 
 # Optimizer computes a 3D tangent step:
 step = [0.1, 0.2, -0.1]
 var_new = update(var, step)
 ```
+
+`ManifoldContext(manifold; basis, retraction, pointtype)` bundles the manifold, tangent basis, retraction and the manifold dimension (stored as a `StaticInt`, which is why `nvars` of a `ManifoldVar` is always static). It always returns a `ManifoldContext`; use `manifoldcontext(manifold; byref)` (below) to choose by-value or by-reference storage.
 
 ### Zero Manifold Duplication: By-Value vs. By-Reference Storage
 
@@ -235,11 +237,11 @@ When thousands of variables share the same manifold (e.g. camera poses or landma
 - **By-Value (`byref = false`)**: For 0-byte singleton manifolds (`parameter = :type`) or small `isbits` manifolds ($\le 16$ bytes), the manifold context is stored directly inline with zero pointer indirection.
 - **By-Reference (`byref = true`)**: For larger or non-`isbits` manifolds, the manifold, basis, and retraction are bundled into a single `Base.RefValue`. Each variable stores **only one 8-byte pointer**, sharing the single heap-allocated manifold instance.
 
-The constructor automatically selects the optimal strategy (`byref = (!isbitstype(C) || sizeof(C) > 16)`), or you can specify it explicitly:
+`ManifoldVar(point, manifold)` and `manifoldcontext(manifold)` automatically select the optimal strategy (`byref = (!isbitstype(C) || sizeof(C) > 16)`), or you can specify it explicitly:
 
 ```julia
 # Explicitly share a single context across 10,000 points:
-ctx = ManifoldContext(M; byref = true)
+ctx = manifoldcontext(M; byref = true)
 vars = [ManifoldVar(points[i], ctx) for i in 1:10000]
 
 # All variables share the exact same context reference:
@@ -254,19 +256,45 @@ vars_copy[1].context === ctx # true
 
 ## Built-in Variable Types
 
-The package includes default implementations for standard types as well as common bounded scalar manifolds:
-
 | Type | Tangent Dim (`nvars`) | Retraction Behavior |
 | :--- | :--- | :--- |
 | `Number` | `static(1)` | Standard scalar addition: $x + \Delta x$ |
 | `StaticVector{N, <:Number}` | `static(N)` | Direct vector addition with `StaticArrays.jl` |
 | `StaticVector{N, T}` | $\sum \text{nvars}$ (`StaticInt` if static) | Unrolled block retraction across elements (0 heap allocations) |
+| `Tuple` / `NamedTuple` | $\sum \text{nvars}$ (`StaticInt` if all blocks are static) | Unrolled block retraction; returns a new tuple of the same shape. A zero-allocation container for a few differently typed blocks |
 | `Vector{<:Number}` | `length(v)` | In-place vector addition |
 | `Vector{T}` (blocks) | $\sum \text{nvars}$ | Block retraction across elements |
-| `ZeroToInfScalar{T}(val)` | `static(1)` | Constrained to $(0, \infty)$ via multiplicative exponential map: $x \cdot e^{\Delta x}$ |
-| `ZeroToOneScalar{T}(val)` | `static(1)` | Constrained to $(0, 1)$ via logistic-exponential retraction |
-| `ManifoldVar{P, C}` | `manifold_dimension(M)` | Retracts point along tangent vector via `get_vector` and `retract` |
+| `ZeroToInfScalar{T}(val)` | `static(1)` | Constrained to $(0, \infty)$; stores `log(val)` and caches `val`, so retraction is exact: $x \cdot e^{\Delta x}$ |
+| `ZeroToOneScalar{T}(val)` | `static(1)` | Constrained to $(0, 1)$; stores the logit and caches `val` and `comp = 1 - val`; retraction adds to the logit |
+| `BoundedReal{T,B}(val, lo, hi)` | `static(1)` | Constrained to $(lo, hi)$; same logit state as `ZeroToOneScalar`, bounds stored as fields |
+| `BoundedVector{V,B}(val, lo, hi)` | `static(N)` for static storage, else `N` | Per-component bounds; `val` can be an `SVector`, `Vector`, `MVector`, ... and is used as the storage type |
+| `ManifoldVar{P, C}` | `static(manifold_dimension(M))` | Retracts point along tangent vector via `get_vector` and `retract` (needs `ManifoldsBase`) |
 | Fallback `Any` | `length(x)` | Retracts via `x + @inbounds(view(step, ...))` |
+
+### Bounded variables
+
+The bounded types store an unconstrained **state** (the log or the logit) and cache the derived value, so a retraction is one exact addition in the state and the result can never leave the interval, however large the step:
+
+```julia
+w = ZeroToOneScalar(0.5)        # w.val == 0.5, w.comp == 0.5 (comp = 1 - val, accurate near 1)
+update(w, [1000.0]).val         # 1.0 (saturated), but update(update(w, [1000.0]), [-1000.0]).val ≈ 0.5
+
+r = BoundedReal(2.0, 1.0, 5.0)  # value 2.0 in (1, 5)
+update(r, [0.3]).val            # stays strictly inside (1, 5)
+distlo(r), disthi(r)            # accurate distances to each bound
+
+# Per-component bounds; the storage type follows the first argument
+bv = BoundedVector(SVector(0.2, 3.0), [0.0, 1.0], [1.0, 5.0])   # static storage, nvars == static(2)
+bd = BoundedVector([0.2, 3.0], 0.0, 5.0)                         # Vector storage, scalar bounds
+update(bv, SVector(0.1, -0.1)).val
+```
+
+- The constructors clamp the value to the open interval, so a value on a bound gives a finite state. `NaN` propagates rather than being masked.
+- Bounds are never reached: the derivative of `val` with respect to the step is $(hi - lo)\,p(1-p)$, so an optimum lying on a bound is approached slowly rather than becoming active.
+- Bounds are fields (not type parameters), so they can be set at run time. `update` is out-of-place and shares `lo`/`hi` with the original.
+- `update` is autodiff-friendly: with a `ForwardDiff.Dual` step, the state and cached values become duals while the bounds stay plain numbers.
+
+**Operator forwarding.** `ZeroToInfScalar`, `ZeroToOneScalar`, `BoundedReal` and `BoundedVector` forward the standard arithmetic, comparison and math functions (`+`, `-`, `*`, `/`, `^`, `sin`, `exp`, `<`, `==`, `≈`, ...) to their cached `val`, so they can be used directly in residual code (`w * x`, `sin(w)`). The result is a plain number (or vector), not a wrapper. Note `==` and `<` compare `val` only. `BoundedVector` also forwards indexing, iteration, reductions and broadcasting (`sin.(bv)`), and `dot`, `cross`, `norm` and `normalize` when `LinearAlgebra` is loaded (package extension `OVILinearAlgebraExt`).
 
 ---
 
@@ -277,6 +305,11 @@ The package includes default implementations for standard types as well as commo
 | `nvars(x)` | Tangent dimension | Returns `StaticInt` or `Int` indicating intrinsic degrees of freedom. Falls back to `Base.length(x)`. |
 | `update(var, step, start=1)` | Out-of-place retraction | Returns new variable instance retracted along `step[start : start+nvars(var)-1]`. Falls back to `var + @inbounds(view(step, ...))` using `Base.:+`. |
 | `update!(to, from, step)` | Unified / in-place retraction | Mutates `to` in-place for `Vector`s; returns `update(from, step)` for immutables. Always use as `to = update!(to, from, step)`. |
-| `copyvars(x)` | Buffer allocation | Returns `x` for immutables (0 allocations); returns shallow `copy` for `isbits` element vectors; `deepcopy` otherwise. |
-| `syncvars!(to, from)` | State synchronization | Copies elements in-place for mutable `Vector`s; returns `from` for immutables. Always use as `to = syncvars!(to, from)`. |
+| `copyvars(x)` | Buffer allocation | Returns `x` for immutables (0 allocations); `copy` for mutable arrays (`Matrix`, `MVector`, ...) and for `Vector`s of `isbits` elements; per-element `copyvars` for other `Vector`s, `Tuple`s and `NamedTuple`s. |
+| `syncvars!(to, from)` | State synchronization | Copies in-place for mutable arrays (per-element for `Vector`s of non-isbits blocks); returns `from` for immutables; returns a tuple of per-element results for `Tuple`/`NamedTuple`. Always use as `to = syncvars!(to, from)`. |
 | `isbitsvartype(T)` | Type introspection | Returns `true` if `T` is an `isbitstype` `DataType` or a `Union` of `isbitstype` types. |
+| `iseliminable(V)` | Schur complement trait | Returns `static(true)` if variable type `V` can be eliminated (marginalized) in a Schur complement; defaults to `static(false)`. |
+
+### Contract for custom mutable variable types
+
+The fallbacks treat unknown types as immutable values, which is only correct while `update!` is out-of-place. A custom type that is updated **in place** (mutable, and not a `Vector`/`Matrix`/other `AbstractArray`) must also define `copyvars` (to allocate an independent scratch copy) and `syncvars!` (to copy state into it), otherwise a rejected trial step would overwrite the current iterate.

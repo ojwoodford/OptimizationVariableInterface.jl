@@ -7,13 +7,28 @@ using Static
 import OptimizationVariableInterface: ManifoldVar, ManifoldContext, get_context, SR
 
 # 1. Constructors
+_default_retraction(manifold, ::Nothing) = ManifoldsBase.default_retraction_method(manifold)
+_default_retraction(manifold, P::Type) = ManifoldsBase.default_retraction_method(manifold, P)
+
+# Dimension is captured as a StaticInt so that nvars of a manifold variable is always static
+OptimizationVariableInterface.ManifoldContext(manifold::ManifoldsBase.AbstractManifold, basis, retraction) =
+    ManifoldContext(manifold, basis, retraction, static(ManifoldsBase.manifold_dimension(manifold)))
+
 function OptimizationVariableInterface.ManifoldContext(
     manifold::ManifoldsBase.AbstractManifold;
     basis = ManifoldsBase.DefaultOrthonormalBasis(),
-    retraction = ManifoldsBase.default_retraction_method(manifold),
-    byref::Union{Bool, Nothing} = nothing
+    pointtype::Union{Type, Nothing} = nothing,
+    retraction = _default_retraction(manifold, pointtype),
 )
-    ctx = ManifoldContext(manifold, basis, retraction)
+    return ManifoldContext(manifold, basis, retraction)
+end
+
+function OptimizationVariableInterface.manifoldcontext(
+    manifold::ManifoldsBase.AbstractManifold;
+    byref::Union{Bool, Nothing} = nothing,
+    kwargs...
+)
+    ctx = ManifoldContext(manifold; kwargs...)
     use_ref = isnothing(byref) ? (!isbitstype(typeof(ctx)) || sizeof(ctx) > 16) : byref
     return use_ref ? Ref(ctx) : ctx
 end
@@ -22,17 +37,17 @@ function OptimizationVariableInterface.ManifoldVar(
     point::P,
     manifold::ManifoldsBase.AbstractManifold;
     basis = ManifoldsBase.DefaultOrthonormalBasis(),
-    retraction = ManifoldsBase.default_retraction_method(manifold, typeof(point)),
+    retraction = _default_retraction(manifold, P),
     byref::Union{Bool, Nothing} = nothing
 ) where {P}
-    ctx = ManifoldContext(manifold; basis=basis, retraction=retraction, byref=byref)
+    ctx = manifoldcontext(manifold; basis=basis, retraction=retraction, byref=byref)
     return ManifoldVar{P, typeof(ctx)}(point, ctx)
 end
 
 # 2. nvars
 OptimizationVariableInterface.nvars(M::ManifoldsBase.AbstractManifold) = ManifoldsBase.manifold_dimension(M)
 OptimizationVariableInterface.nvars(::ManifoldsBase.DefaultManifold{𝔽, ManifoldsBase.TypeParameter{Tuple{N}}}) where {𝔽, N} = static(N)
-OptimizationVariableInterface.nvars(v::ManifoldVar) = OptimizationVariableInterface.nvars(get_context(v).manifold)
+OptimizationVariableInterface.nvars(v::ManifoldVar) = get_context(v).dim
 
 # 3. update (out-of-place retraction)
 @inline function OptimizationVariableInterface.update(v::ManifoldVar{P}, step, start=1) where {P}
@@ -109,6 +124,7 @@ end
 
 # 6. syncvars!
 @inline function OptimizationVariableInterface.syncvars!(to::ManifoldVar, from::ManifoldVar)
+    ismutable(to.point) || return from
     OptimizationVariableInterface.syncvars!(to.point, from.point)
     return to
 end
@@ -118,7 +134,7 @@ function OptimizationVariableInterface.syncvars!(to::Vector{<:ManifoldVar}, from
         copyto!(to, from)
     else
         @inbounds for i in eachindex(to, from)
-            OptimizationVariableInterface.syncvars!(to[i].point, from[i].point)
+            to[i] = OptimizationVariableInterface.syncvars!(to[i], from[i])
         end
     end
     return to

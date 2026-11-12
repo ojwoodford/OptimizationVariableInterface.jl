@@ -193,6 +193,61 @@ using OptimizationVariableInterface, Static, StaticArrays, Test, ForwardDiff, Aq
     tup_sync = syncvars!(tup_mut_copy, ([5.0, 6.0], 2.0))
     @test tup_sync == ([5.0, 6.0], 2.0) && tup_sync[1] === tup_mut_copy[1]
 
+    # BoundedVector: static and dynamic storage
+    for (mk, stat) in ((SVector{3, Float64}, true), (x -> Float64[x...], false), (x -> MVector{3, Float64}(x), true))
+        v0 = mk((0.5, 2.0, -1.0))
+        bvec = BoundedVector(v0, mk((0.0, 1.0, -2.0)), mk((1.0, 5.0, 0.0)))
+        @test bvec.val ≈ v0 && bvec.lo == mk((0.0, 1.0, -2.0))
+        @test typeof(bvec.val) == typeof(v0) && typeof(bvec.logit) == typeof(v0)
+        stat ? (@test nvars(bvec) === static(3)) : (@test nvars(bvec) == 3 && !(nvars(bvec) isa StaticInt))
+        for st in (-1e3, -30.0, 0.0, 30.0, 1e3)
+            r = update(bvec, fill(st, 3))
+            @test all(bvec.lo .<= r.val .<= bvec.hi) && r.lo === bvec.lo && r.hi === bvec.hi
+        end
+        r0 = update(bvec, [0.0, 0.0, 0.0])
+        @test r0.val ≈ v0
+        @test update(bvec, [9.0, 0.5, 0.0, -0.5], 2).val ≈ update(bvec, [0.5, 0.0, -0.5]).val
+        @test update(update(bvec, fill(1e3, 3)), fill(-1e3, 3)).val ≈ v0 atol=1e-9
+        @test bvec.val == v0   # original not modified
+    end
+    # scalar bounds broadcast to all components; accuracy near a bound
+    bs = BoundedVector(SVector(0.2, 0.7), 0.0, 1.0)
+    @test bs.lo === SVector(0.0, 0.0) && bs.hi === SVector(1.0, 1.0) && bs.val ≈ SVector(0.2, 0.7)
+    bt = BoundedVector([1e6 + 0.5], [1e6], [1e6 + 1])
+    @test bt.val ≈ [1e6 + 0.5]
+    bt2 = update(bt, [30.0])
+    @test bt2.val[1] <= 1e6 + 1
+    # clamping and validation
+    @test all(0.0 .< BoundedVector([0.0, 1.0], 0.0, 1.0).val .< 1.0)
+    @test all(isfinite, BoundedVector([0.0, 1.0], 0.0, 1.0).logit)
+    @test_throws ArgumentError BoundedVector([0.5], 1.0, 1.0)
+    @test_throws ArgumentError BoundedVector([0.5], 0.0, Inf)
+    @test_throws DimensionMismatch BoundedVector([0.5, 0.5], [0.0], [1.0])
+    @test isnan(update(BoundedVector([0.5], 0.0, 1.0), [NaN]).val[1])
+    # matches BoundedReal componentwise
+    @test update(BoundedVector(SVector(2.0, 3.0), 1.0, 5.0), SVector(0.3, -0.4)).val ≈
+          SVector(update(BoundedReal(2.0, 1.0, 5.0), [0.3]).val, update(BoundedReal(3.0, 1.0, 5.0), [-0.4]).val)
+    # inference, zero allocation for static storage, and ForwardDiff
+    bsv = BoundedVector(SVector(2.0, 3.0), 1.0, 5.0)
+    @test (@inferred update(bsv, SVector(0.1, 0.2))) isa BoundedVector{SVector{2, Float64}, SVector{2, Float64}}
+    update(bsv, SVector(0.1, 0.2))
+    @test (@allocated update(bsv, SVector(0.1, 0.2))) == 0
+    jac = ForwardDiff.jacobian(d -> update(bsv, d).val, [0.0, 0.0])
+    pp = (bsv.val .- bsv.lo) ./ (bsv.hi .- bsv.lo)
+    @test jac ≈ [4pp[1]*(1-pp[1]) 0; 0 4pp[2]*(1-pp[2])]
+    jac_s = ForwardDiff.jacobian(d -> Vector(update(bsv, SVector{2}(d)).val), [0.0, 0.0])
+    @test jac_s ≈ jac
+    # inside containers
+    cont = (bsv, 1.0)
+    @test nvars(cont) === static(3)
+    cont_new = update(cont, [0.1, 0.2, 0.5])
+    @test cont_new[1].val ≈ update(bsv, [0.1, 0.2]).val && cont_new[2] == 1.5
+    vv = [BoundedVector([2.0, 3.0], 1.0, 5.0), BoundedVector([2.5], 1.0, 5.0)]
+    @test nvars(vv) == 3
+    vv2 = update!(copyvars(vv), vv, [0.1, 0.2, 0.3])
+    @test vv2[1].val ≈ update(vv[1], [0.1, 0.2]).val && vv2[2].val ≈ update(vv[2], [0.3]).val
+    @test vv[1].val == [2.0, 3.0]
+
     # 3. update! (in-place / unified)
     # Immutable fallback
     @test update!(0.0, 2.0, [0.5]) == 2.5

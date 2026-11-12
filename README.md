@@ -266,6 +266,7 @@ The package includes default implementations for standard types as well as commo
 | `ZeroToInfScalar{T}(val)` | `static(1)` | Constrained to $(0, \infty)$; stores `log(val)` and caches `val`, so retraction is exact: $x \cdot e^{\Delta x}$ |
 | `ZeroToOneScalar{T}(val)` | `static(1)` | Constrained to $(0, 1)$; stores the logit and caches `val` and `comp = 1 - val`; retraction adds to the logit |
 | `BoundedReal{T,B}(val, lo, hi)` | `static(1)` | Constrained to $(lo, hi)$; same logit state as `ZeroToOneScalar`, bounds stored as fields. The bounds are never reached, so an optimum on a bound is approached slowly |
+| `BoundedVector{V,B}(val, lo, hi)` | `static(N)` / `N` | Per-component bounds; `val` can be an `SVector`, `Vector`, `MVector`, ... and is used as the storage type |
 | `ManifoldVar{P, C}` | `manifold_dimension(M)` | Retracts point along tangent vector via `get_vector` and `retract` |
 | Fallback `Any` | `length(x)` | Retracts via `x + @inbounds(view(step, ...))` |
 

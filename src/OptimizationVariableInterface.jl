@@ -3,7 +3,7 @@ module OptimizationVariableInterface
 using Static, StaticArrays
 
 export nvars, update, update!, copyvars, syncvars!, isbitsvartype, iseliminable
-export ZeroToInfScalar, ZeroToOneScalar, BoundedReal
+export ZeroToInfScalar, ZeroToOneScalar, BoundedReal, BoundedVector
 export distlo, disthi
 export ManifoldVar, ManifoldContext, manifoldcontext
 
@@ -181,6 +181,13 @@ end
 nvars(::ZeroToOneScalar) = static(1)
 update(var::ZeroToOneScalar, updatevec, start=1) = ZeroToOneScalar(var.logit + @inbounds(updatevec[start]), Val(:logit))
 
+# lo + (hi - lo)·logistic(z), measured from the nearer bound so it is accurate at both ends
+@inline function _bounded_val(z, lo, hi)
+    p, q = _logistic_pair(z)
+    w = hi - lo
+    return p <= q ? lo + w * p : hi - w * q
+end
+
 """
     BoundedReal(val, lo, hi)
 
@@ -198,10 +205,7 @@ struct BoundedReal{T, B <: Real}
     lo::B
     hi::B
     function BoundedReal{T, B}(z::T, lo::B, hi::B) where {T, B <: Real}
-        p, q = _logistic_pair(z)
-        w = hi - lo
-        val = p <= q ? lo + w * p : hi - w * q   # measure from the nearer bound
-        return new{T, B}(z, val, lo, hi)
+        return new{T, B}(z, _bounded_val(z, lo, hi), lo, hi)
     end
 end
 BoundedReal(z::T, lo::B, hi::B, ::Val{:logit}) where {T, B <: Real} = BoundedReal{T, B}(z, lo, hi)
@@ -226,6 +230,53 @@ end
 function disthi(v::BoundedReal)
     _, q = _logistic_pair(v.logit)
     return (v.hi - v.lo) * q
+end
+
+"""
+    BoundedVector(val, lo, hi)
+
+Vector variable with per-component open bounds `(lo[i], hi[i])`: the vector analogue of [`BoundedReal`](@ref).
+`val` is any `AbstractVector` (e.g. `SVector`, `Vector`, `MVector`) and is used as the storage type for
+the logit state and the cached values; `lo` and `hi` are vectors of the same length or scalars applied to
+every component. Bounds are never optimized and are shared (not copied) by [`update`](@ref), which is
+out-of-place. For a `StaticVector`, `nvars` is static.
+"""
+struct BoundedVector{V <: AbstractVector, B <: AbstractVector}
+    logit::V   # state
+    val::V     # cached lo + (hi - lo)·p
+    lo::B
+    hi::B
+    function BoundedVector{V, B}(z::V, lo::B, hi::B) where {V <: AbstractVector, B <: AbstractVector}
+        val = convert(V, map(_bounded_val, z, lo, hi))
+        return new{V, B}(z, val, lo, hi)
+    end
+end
+BoundedVector(z::V, lo::B, hi::B, ::Val{:logit}) where {V <: AbstractVector, B <: AbstractVector} = BoundedVector{V, B}(z, lo, hi)
+
+_conform(val, x::Real) = map(_ -> x, val)
+_conform(val::StaticVector, x::AbstractVector) = similar_type(val)(x)
+_conform(val, x::AbstractVector) = collect(x)
+
+function BoundedVector(val::AbstractVector, lo, hi)
+    val = map(float, val)
+    lo, hi = _conform(val, lo), _conform(val, hi)
+    length(lo) == length(val) == length(hi) || throw(DimensionMismatch("val, lo and hi must have equal length"))
+    T = promote_type(eltype(lo), eltype(hi))
+    lo, hi = map(float ∘ T, lo), map(float ∘ T, hi)
+    all(isfinite, lo) && all(isfinite, hi) && all(map(<, lo, hi)) ||
+        throw(ArgumentError("need finite lo < hi componentwise"))
+    z = map(val, lo, hi) do v, l, h
+        v = _clampnan(v, nextfloat(l), prevfloat(h))   # open interval
+        log(v - l) - log(h - v)
+    end
+    return BoundedVector(z, lo, hi, Val(:logit))
+end
+nvars(::BoundedVector{<:StaticVector{N}}) where N = static(N)
+nvars(v::BoundedVector) = length(v.logit)
+@inline function update(v::BoundedVector, δ, start=1)
+    n = nvars(v)
+    rng = n isa StaticInt ? (SR(0, dynamic(n) - 1) .+ start) : (start:(start + dynamic(n) - 1))
+    return BoundedVector(v.logit + @inbounds(view(δ, rng)), v.lo, v.hi, Val(:logit))
 end
 
 # 5. Scratch buffer allocation & syncing

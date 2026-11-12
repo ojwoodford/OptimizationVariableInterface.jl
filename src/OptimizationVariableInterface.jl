@@ -1,6 +1,6 @@
 module OptimizationVariableInterface
 
-using Static, StaticArrays
+using Static, StaticArrays, LinearAlgebra
 
 export nvars, update, update!, copyvars, syncvars!, isbitsvartype, iseliminable
 export ZeroToInfScalar, ZeroToOneScalar, BoundedReal, BoundedVector
@@ -277,6 +277,76 @@ nvars(v::BoundedVector) = length(v.logit)
     n = nvars(v)
     rng = n isa StaticInt ? (SR(0, dynamic(n) - 1) .+ start) : (start:(start + dynamic(n) - 1))
     return BoundedVector(v.logit + @inbounds(view(δ, rng)), v.lo, v.hi, Val(:logit))
+end
+
+# 4b. Forwarding of standard operators to the cached `val` of the bounded types
+const BoundedScalar = Union{ZeroToInfScalar, ZeroToOneScalar, BoundedReal}
+const BoundedAny = Union{BoundedScalar, BoundedVector}
+@inline _v(x::BoundedAny) = x.val
+@inline _v(x) = x
+
+# Scalars: unary functions
+for f in (:+, :-, :abs, :abs2, :sqrt, :cbrt, :exp, :exp2, :exp10, :expm1, :log, :log2, :log10, :log1p,
+          :sin, :cos, :tan, :sec, :csc, :cot, :asin, :acos, :atan, :sinh, :cosh, :tanh, :asinh, :acosh, :atanh,
+          :sinpi, :cospi, :sind, :cosd, :tand, :deg2rad, :rad2deg, :floor, :ceil, :round, :trunc, :sign, :signbit,
+          :inv, :conj, :real, :imag, :float, :isnan, :isinf, :isfinite, :iszero, :isone, :adjoint, :transpose)
+    @eval Base.$f(x::BoundedScalar) = $f(x.val)
+end
+# Scalars: binary functions (scalar-scalar, scalar-number, number-scalar)
+for f in (:+, :-, :*, :/, :\, :^, :min, :max, :atan, :hypot, :mod, :rem, :div, :fld, :cld, :copysign,
+          :(==), :<, :<=, :isless)
+    @eval begin
+        Base.$f(a::BoundedScalar, b::BoundedScalar) = $f(a.val, b.val)
+        Base.$f(a::BoundedScalar, b::Number) = $f(a.val, b)
+        Base.$f(a::Number, b::BoundedScalar) = $f(a, b.val)
+    end
+end
+# Scalars with arrays
+Base.:*(a::BoundedScalar, B::AbstractArray) = a.val * B
+Base.:*(A::AbstractArray, b::BoundedScalar) = A * b.val
+Base.:/(A::AbstractArray, b::BoundedScalar) = A / b.val
+Base.:\(a::BoundedScalar, B::AbstractArray) = a.val \ B
+Base.isapprox(a::BoundedScalar, b::Union{Number, BoundedScalar}; kw...) = isapprox(a.val, _v(b); kw...)
+Base.isapprox(a::Number, b::BoundedScalar; kw...) = isapprox(a, b.val; kw...)
+Base.broadcastable(x::BoundedScalar) = x.val
+
+# Vectors: container interface and unary operations
+Base.length(v::BoundedVector) = length(v.val)
+Base.size(v::BoundedVector) = size(v.val)
+Base.axes(v::BoundedVector) = axes(v.val)
+Base.eltype(::Type{<:BoundedVector{V}}) where V = eltype(V)
+Base.firstindex(v::BoundedVector) = firstindex(v.val)
+Base.lastindex(v::BoundedVector) = lastindex(v.val)
+Base.getindex(v::BoundedVector, i...) = getindex(v.val, i...)
+Base.iterate(v::BoundedVector, st...) = iterate(v.val, st...)
+Base.broadcastable(v::BoundedVector) = v.val
+for f in (:+, :-, :conj, :real, :imag, :adjoint, :transpose, :sum, :prod, :maximum, :minimum, :extrema,
+          :first, :last, :copy, :reverse, :cumsum, :isempty)
+    @eval Base.$f(x::BoundedVector) = $f(x.val)
+end
+LinearAlgebra.norm(x::BoundedVector, p::Real=2) = norm(x.val, p)
+LinearAlgebra.normalize(x::BoundedVector, p::Real=2) = normalize(x.val, p)
+# Vectors: binary operations
+for f in (:+, :-, :*, :/, :\, :(==))
+    @eval begin
+        Base.$f(a::BoundedVector, b::BoundedVector) = $f(a.val, b.val)
+        Base.$f(a::BoundedVector, b::AbstractArray) = $f(a.val, b)
+        Base.$f(a::AbstractArray, b::BoundedVector) = $f(a, b.val)
+    end
+end
+for f in (:*, :/)
+    @eval Base.$f(a::BoundedVector, b::Number) = $f(a.val, b)
+end
+Base.:*(a::Number, b::BoundedVector) = a * b.val
+Base.:\(a::Number, b::BoundedVector) = a \ b.val
+Base.isapprox(a::BoundedVector, b::Union{AbstractArray, BoundedVector}; kw...) = isapprox(a.val, _v(b); kw...)
+Base.isapprox(a::AbstractArray, b::BoundedVector; kw...) = isapprox(a, b.val; kw...)
+for f in (:dot, :cross)
+    @eval begin
+        LinearAlgebra.$f(a::BoundedVector, b::BoundedVector) = $f(a.val, b.val)
+        LinearAlgebra.$f(a::BoundedVector, b::AbstractArray) = $f(a.val, b)
+        LinearAlgebra.$f(a::AbstractArray, b::BoundedVector) = $f(a, b.val)
+    end
 end
 
 # 5. Scratch buffer allocation & syncing

@@ -1,4 +1,4 @@
-using OptimizationVariableInterface, Static, StaticArrays, Test, ForwardDiff, Aqua
+using OptimizationVariableInterface, Static, StaticArrays, Test, ForwardDiff, Aqua, LinearAlgebra
 
 @testset "OptimizationVariableInterface.jl" begin
     Aqua.test_all(OptimizationVariableInterface)
@@ -247,6 +247,46 @@ using OptimizationVariableInterface, Static, StaticArrays, Test, ForwardDiff, Aq
     vv2 = update!(copyvars(vv), vv, [0.1, 0.2, 0.3])
     @test vv2[1].val ≈ update(vv[1], [0.1, 0.2]).val && vv2[2].val ≈ update(vv[2], [0.3]).val
     @test vv[1].val == [2.0, 3.0]
+
+    # Operator forwarding to `val`
+    scalars = (ZeroToInfScalar(2.5), ZeroToOneScalar(0.3), BoundedReal(2.0, 1.0, 5.0))
+    for w in scalars
+        x = w.val
+        @test +w == x && -w == -x && abs(w) == abs(x) && w + 1 == x + 1 && 1 + w == 1 + x
+        @test w - 0.5 == x - 0.5 && 2 - w == 2 - x && w * 3 == x * 3 && 3 * w == 3 * x
+        @test w / 2 == x / 2 && 2 / w == 2 / x && 2 \ w == 2 \ x && w^2 == x^2 && 2^w == 2^x
+        @test sin(w) == sin(x) && cos(w) == cos(x) && exp(w) == exp(x) && log(w) == log(x) && sqrt(w) == sqrt(x)
+        @test atan(w, 2.0) == atan(x, 2.0) && min(w, 1.0) == min(x, 1.0) && max(1.0, w) == max(1.0, x)
+        @test w == x && x == w && w < x + 1 && x - 1 < w && w <= x && isless(w, x + 1)
+        @test w + w == 2x && w * w == x * x && !(w < w)
+        @test w ≈ x && x ≈ w && isapprox(w, x + 1e-9; atol=1e-6)
+        @test floor(w) == floor(x) && isfinite(w) && !isnan(w) && float(w) == float(x)
+        @test w * [1.0, 2.0] == x * [1.0, 2.0] && [1.0, 2.0] * w == [1.0, 2.0] * x && [1.0, 2.0] / w == [1.0, 2.0] / x
+        @test sin.([0.0, 1.0] .+ w) == sin.([0.0, 1.0] .+ x)
+        @test sum(w * ones(3)) ≈ 3x
+    end
+    @test hypot(scalars[1], scalars[3]) == hypot(scalars[1].val, scalars[3].val)
+    @test scalars[1] + scalars[3] == scalars[1].val + scalars[3].val
+
+    bvf = BoundedVector([0.2, 0.7, 0.4], 0.0, 1.0)
+    x3 = bvf.val
+    @test length(bvf) == 3 && size(bvf) == (3,) && axes(bvf) == (Base.OneTo(3),) && bvf[2] == x3[2] && bvf[2:3] == x3[2:3]
+    @test first(bvf) == x3[1] && last(bvf) == x3[3] && lastindex(bvf) == 3 && collect(bvf) == x3 && eltype(bvf) == Float64
+    @test [e for e in bvf] == x3
+    @test +bvf == x3 && -bvf == -x3 && bvf + bvf == 2x3 && bvf - x3 == zeros(3) && x3 + bvf == 2x3
+    @test bvf * 2 == 2x3 && 2 * bvf == 2x3 && bvf / 2 == x3 / 2 && sum(bvf) == sum(x3) && maximum(bvf) == maximum(x3)
+    @test minimum(bvf) == minimum(x3) && extrema(bvf) == extrema(x3) && reverse(bvf) == reverse(x3) && cumsum(bvf) == cumsum(x3)
+    @test dot(bvf, bvf) == dot(x3, x3) && dot(bvf, ones(3)) == sum(x3) && dot(ones(3), bvf) == sum(x3)
+    @test norm(bvf) == norm(x3) && norm(bvf, 1) == norm(x3, 1) && normalize(bvf) == normalize(x3)
+    @test cross(bvf, [1.0, 0.0, 0.0]) == cross(x3, [1.0, 0.0, 0.0])
+    @test [1.0 2.0 3.0; 4.0 5.0 6.0] * bvf == [1.0 2.0 3.0; 4.0 5.0 6.0] * x3
+    @test bvf'  == x3' && transpose(bvf) == transpose(x3)
+    @test bvf == x3 && x3 == bvf && bvf ≈ x3 .+ 1e-9 && x3 ≈ bvf && bvf == bvf
+    @test sin.(bvf) == sin.(x3) && bvf .+ 1 == x3 .+ 1 && bvf .* bvf == x3 .* x3
+    @test_throws MethodError sin(bvf)       # same as for a plain vector
+    svf = BoundedVector(SVector(0.2, 0.7), 0.0, 1.0)
+    @test svf + svf === svf.val + svf.val && 2 * svf === 2 * svf.val && dot(svf, svf) == dot(svf.val, svf.val)
+    @test (@allocated svf + svf) == 0
 
     # 3. update! (in-place / unified)
     # Immutable fallback

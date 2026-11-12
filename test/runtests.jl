@@ -57,6 +57,7 @@ using OptimizationVariableInterface, Static, StaticArrays, Test, ForwardDiff, Aq
 
     # StaticVector of OVI variables
     allocs_update(v, s) = @allocated update(v, s)
+    allocs_add(a, b) = @allocated a + b
     svec_ovi = SVector(ZeroToInfScalar(1.0), ZeroToInfScalar(2.0))
     @test nvars(svec_ovi) === static(2)
     svec_ovi_upd = update(svec_ovi, SVector(log(2.0), log(3.0)))
@@ -185,7 +186,9 @@ using OptimizationVariableInterface, Static, StaticArrays, Test, ForwardDiff, Aq
     @test nvars(nt) === static(3)
     nt_new = update(nt, [0.5, 0.1, 0.2])
     @test nt_new isa NamedTuple{(:a, :b)} && nt_new.a == 1.5 && nt_new.b === SVector(1.1, 2.2)
-    @test (@allocated update(tup, [0.5, 0.1, 0.2, 0.0, 0.0])) < 200   # no Vector{Union}; small
+    step_tup = [0.5, 0.1, 0.2, 0.0, 0.0]
+    allocs_update(tup, step_tup)
+    @test allocs_update(tup, step_tup) < 200   # no Vector{Union}; small
     @test update!(copyvars(tup), tup, [0.5, 0.1, 0.2, log(2.0), 0.0])[1] == 1.5
     tup_mut = (zeros(2), 1.0)
     tup_mut_copy = copyvars(tup_mut)
@@ -230,8 +233,9 @@ using OptimizationVariableInterface, Static, StaticArrays, Test, ForwardDiff, Aq
     # inference, zero allocation for static storage, and ForwardDiff
     bsv = BoundedVector(SVector(2.0, 3.0), 1.0, 5.0)
     @test (@inferred update(bsv, SVector(0.1, 0.2))) isa BoundedVector{SVector{2, Float64}, SVector{2, Float64}}
-    update(bsv, SVector(0.1, 0.2))
-    @test (@allocated update(bsv, SVector(0.1, 0.2))) == 0
+    step_bsv = SVector(0.1, 0.2)
+    allocs_update(bsv, step_bsv)
+    @test allocs_update(bsv, step_bsv) == 0
     jac = ForwardDiff.jacobian(d -> update(bsv, d).val, [0.0, 0.0])
     pp = (bsv.val .- bsv.lo) ./ (bsv.hi .- bsv.lo)
     @test jac ≈ [4pp[1]*(1-pp[1]) 0; 0 4pp[2]*(1-pp[2])]
@@ -290,7 +294,8 @@ using OptimizationVariableInterface, Static, StaticArrays, Test, ForwardDiff, Aq
     @test_throws MethodError sin(bvf)       # same as for a plain vector
     svf = BoundedVector(SVector(0.2, 0.7), 0.0, 1.0)
     @test svf + svf === svf.val + svf.val && 2 * svf === 2 * svf.val && dot(svf, svf) == dot(svf.val, svf.val)
-    @test (@allocated svf + svf) == 0
+    allocs_add(svf, svf)
+    @test allocs_add(svf, svf) == 0
 
     # 3. update! (in-place / unified)
     # Immutable fallback

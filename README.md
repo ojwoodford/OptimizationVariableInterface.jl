@@ -289,6 +289,7 @@ bd = BoundedVector([0.2, 3.0], 0.0, 5.0)                         # Vector storag
 update(bv, SVector(0.1, -0.1)).val
 ```
 
+- Construction always takes a *value*, including the parameterized forms (`ZeroToInfScalar{Float32}(2.0)`, `BoundedReal{Float64,Float64}(v, lo, hi)`). The raw state (log / logit) is only reachable through the tagged form, e.g. `ZeroToOneScalar(z, Val(:logit))`, `ZeroToInfScalar(z, Val(:log))`, `BoundedReal(z, lo, hi, Val(:logit))`; read it back from the `logval` / `logit` fields.
 - The constructors clamp the value to the open interval, so a value on a bound gives a finite state. `NaN` propagates rather than being masked.
 - Bounds are never reached: the derivative of `val` with respect to the step is $(hi - lo)\,p(1-p)$, so an optimum lying on a bound is approached slowly rather than becoming active.
 - Bounds are fields (not type parameters), so they can be set at run time. `update` is out-of-place and shares `lo`/`hi` with the original.

@@ -1,6 +1,6 @@
 module OptimizationVariableInterface
 
-using Static, StaticArrays, LinearAlgebra
+using Static, StaticArrays
 
 export nvars, update, update!, copyvars, syncvars!, isbitsvartype, iseliminable
 export ZeroToInfScalar, ZeroToOneScalar, BoundedReal, BoundedVector
@@ -324,8 +324,6 @@ for f in (:+, :-, :conj, :real, :imag, :adjoint, :transpose, :sum, :prod, :maxim
           :first, :last, :copy, :reverse, :cumsum, :isempty)
     @eval Base.$f(x::BoundedVector) = $f(x.val)
 end
-LinearAlgebra.norm(x::BoundedVector, p::Real=2) = norm(x.val, p)
-LinearAlgebra.normalize(x::BoundedVector, p::Real=2) = normalize(x.val, p)
 # Vectors: binary operations
 for f in (:+, :-, :*, :/, :\, :(==))
     @eval begin
@@ -341,13 +339,7 @@ Base.:*(a::Number, b::BoundedVector) = a * b.val
 Base.:\(a::Number, b::BoundedVector) = a \ b.val
 Base.isapprox(a::BoundedVector, b::Union{AbstractArray, BoundedVector}; kw...) = isapprox(a.val, _v(b); kw...)
 Base.isapprox(a::AbstractArray, b::BoundedVector; kw...) = isapprox(a, b.val; kw...)
-for f in (:dot, :cross)
-    @eval begin
-        LinearAlgebra.$f(a::BoundedVector, b::BoundedVector) = $f(a.val, b.val)
-        LinearAlgebra.$f(a::BoundedVector, b::AbstractArray) = $f(a.val, b)
-        LinearAlgebra.$f(a::AbstractArray, b::BoundedVector) = $f(a, b.val)
-    end
-end
+# `dot`, `cross`, `norm` and `normalize` are forwarded in the LinearAlgebra extension (OVILinearAlgebraExt).
 
 # 5. Scratch buffer allocation & syncing
 """

@@ -268,7 +268,7 @@ The package includes default implementations for standard types as well as commo
 | `BoundedReal{T,B}(val, lo, hi)` | `static(1)` | Constrained to $(lo, hi)$; same logit state as `ZeroToOneScalar`, bounds stored as fields. The bounds are never reached, so an optimum on a bound is approached slowly |
 | `BoundedVector{V,B}(val, lo, hi)` | `static(N)` / `N` | Per-component bounds; `val` can be an `SVector`, `Vector`, `MVector`, ... and is used as the storage type |
 
-`ZeroToInfScalar`, `ZeroToOneScalar`, `BoundedReal` and `BoundedVector` forward the standard arithmetic, comparison and math functions (`+`, `-`, `*`, `/`, `^`, `sin`, `exp`, `<`, `==`, `≈`, ...) to their cached `val`, so they can be used directly in residual code (`w * x`, `sin(w)`). The result is a plain number (or vector), not a wrapper. `BoundedVector` also forwards indexing, iteration, reductions, `dot`, `norm` and broadcasting.
+`ZeroToInfScalar`, `ZeroToOneScalar`, `BoundedReal` and `BoundedVector` forward the standard arithmetic, comparison and math functions (`+`, `-`, `*`, `/`, `^`, `sin`, `exp`, `<`, `==`, `≈`, ...) to their cached `val`, so they can be used directly in residual code (`w * x`, `sin(w)`). The result is a plain number (or vector), not a wrapper. `BoundedVector` also forwards indexing, iteration, reductions and broadcasting, and `dot`, `cross`, `norm` and `normalize` when `LinearAlgebra` is loaded (package extension `OVILinearAlgebraExt`).
 | `ManifoldVar{P, C}` | `manifold_dimension(M)` | Retracts point along tangent vector via `get_vector` and `retract` |
 | Fallback `Any` | `length(x)` | Retracts via `x + @inbounds(view(step, ...))` |
 

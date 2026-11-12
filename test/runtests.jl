@@ -249,6 +249,7 @@ using OptimizationVariableInterface, Static, StaticArrays, Test, ForwardDiff, Aq
     @test vv[1].val == [2.0, 3.0]
 
     # Operator forwarding to `val`
+    @test Base.get_extension(OptimizationVariableInterface, :OVILinearAlgebraExt) !== nothing
     scalars = (ZeroToInfScalar(2.5), ZeroToOneScalar(0.3), BoundedReal(2.0, 1.0, 5.0))
     for w in scalars
         x = w.val

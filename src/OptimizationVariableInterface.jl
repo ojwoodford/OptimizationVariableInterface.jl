@@ -144,15 +144,18 @@ is cached (clamped to `[floatmin, floatmax]`). `NaN` propagates.
 struct ZeroToInfScalar{T}
     logval::T   # source of truth
     val::T      # cached exp(logval)
-    function ZeroToInfScalar{T}(z::T) where T
+    # The raw state is only reachable through the tagged form, so `ZeroToInfScalar{T}(x)` always takes a value
+    function ZeroToInfScalar{T}(z::T, ::Val{:log}) where T
         return new{T}(z, _clampnan(exp(z), _tiny(T), _huge(T)))
     end
 end
-ZeroToInfScalar(z::T, ::Val{:log}) where T = ZeroToInfScalar{T}(z)
-function ZeroToInfScalar(val::Real)
+ZeroToInfScalar(z::T, ::Val{:log}) where T = ZeroToInfScalar{T}(z, Val(:log))
+function _log_of(val)
     v = float(val)
-    return ZeroToInfScalar(log(_clampnan(v, _tiny(typeof(v)), _huge(typeof(v)))), Val(:log))
+    return log(_clampnan(v, _tiny(typeof(v)), _huge(typeof(v))))
 end
+ZeroToInfScalar(val::Real) = ZeroToInfScalar(_log_of(val), Val(:log))
+ZeroToInfScalar{T}(val::Real) where T = ZeroToInfScalar{T}(convert(T, _log_of(val)), Val(:log))
 nvars(::ZeroToInfScalar) = static(1)
 update(var::ZeroToInfScalar, updatevec, start=1) = ZeroToInfScalar(var.logval + @inbounds(updatevec[start]), Val(:log))
 
@@ -167,17 +170,20 @@ struct ZeroToOneScalar{T}
     logit::T   # source of truth
     val::T     # cached p = 1 / (1 + exp(-logit))
     comp::T    # cached 1 - p, computed directly
-    function ZeroToOneScalar{T}(z::T) where T
+    # The raw state is only reachable through the tagged form, so `ZeroToOneScalar{T}(p)` always takes a value
+    function ZeroToOneScalar{T}(z::T, ::Val{:logit}) where T
         p, q = _logistic_pair(z)
         return new{T}(z, p, q)
     end
 end
-ZeroToOneScalar(z::T, ::Val{:logit}) where T = ZeroToOneScalar{T}(z)
-function ZeroToOneScalar(p::Real)   # clamped to the open interval
+ZeroToOneScalar(z::T, ::Val{:logit}) where T = ZeroToOneScalar{T}(z, Val(:logit))
+function _logit_of(p)   # clamped to the open interval
     f = float(p)
     q = _clampnan(f, nextfloat(zero(f)), prevfloat(one(f)))
-    return ZeroToOneScalar(log(q) - log1p(-q), Val(:logit))
+    return log(q) - log1p(-q)
 end
+ZeroToOneScalar(p::Real) = ZeroToOneScalar(_logit_of(p), Val(:logit))
+ZeroToOneScalar{T}(p::Real) where T = ZeroToOneScalar{T}(convert(T, _logit_of(p)), Val(:logit))
 nvars(::ZeroToOneScalar) = static(1)
 update(var::ZeroToOneScalar, updatevec, start=1) = ZeroToOneScalar(var.logit + @inbounds(updatevec[start]), Val(:logit))
 
@@ -204,16 +210,25 @@ struct BoundedReal{T, B <: Real}
     val::T     # cached lo + (hi - lo)·p
     lo::B
     hi::B
-    function BoundedReal{T, B}(z::T, lo::B, hi::B) where {T, B <: Real}
+    # The raw state is only reachable through the tagged form, so `BoundedReal{T, B}(val, lo, hi)` always takes a value
+    function BoundedReal{T, B}(z::T, lo::B, hi::B, ::Val{:logit}) where {T, B <: Real}
         return new{T, B}(z, _bounded_val(z, lo, hi), lo, hi)
     end
 end
-BoundedReal(z::T, lo::B, hi::B, ::Val{:logit}) where {T, B <: Real} = BoundedReal{T, B}(z, lo, hi)
-function BoundedReal(val::Real, lo::Real, hi::Real)
+BoundedReal(z::T, lo::B, hi::B, ::Val{:logit}) where {T, B <: Real} = BoundedReal{T, B}(z, lo, hi, Val(:logit))
+function _bounded_state(val, lo, hi)   # -> (logit, lo, hi), validated; value clamped to the open interval
     lo, hi = promote(float(lo), float(hi))
     (isfinite(lo) && isfinite(hi) && lo < hi) || throw(ArgumentError("need finite lo < hi, got ($lo, $hi)"))
-    v = _clampnan(float(val), nextfloat(lo), prevfloat(hi))   # open interval
-    return BoundedReal(log(v - lo) - log(hi - v), lo, hi, Val(:logit))   # separate logs: no cancellation
+    v = _clampnan(float(val), nextfloat(lo), prevfloat(hi))
+    return log(v - lo) - log(hi - v), lo, hi   # separate logs: no cancellation
+end
+function BoundedReal(val::Real, lo::Real, hi::Real)
+    z, l, h = _bounded_state(val, lo, hi)
+    return BoundedReal(z, l, h, Val(:logit))
+end
+function BoundedReal{T, B}(val::Real, lo::Real, hi::Real) where {T, B <: Real}
+    z, l, h = _bounded_state(val, lo, hi)
+    return BoundedReal{T, B}(convert(T, z), convert(B, l), convert(B, h), Val(:logit))
 end
 nvars(::BoundedReal) = static(1)
 update(v::BoundedReal, δ, start=1) = BoundedReal(v.logit + @inbounds(δ[start]), v.lo, v.hi, Val(:logit))
@@ -246,18 +261,19 @@ struct BoundedVector{V <: AbstractVector, B <: AbstractVector}
     val::V     # cached lo + (hi - lo)·p
     lo::B
     hi::B
-    function BoundedVector{V, B}(z::V, lo::B, hi::B) where {V <: AbstractVector, B <: AbstractVector}
+    # The raw state is only reachable through the tagged form, so `BoundedVector{V, B}(val, lo, hi)` always takes values
+    function BoundedVector{V, B}(z::V, lo::B, hi::B, ::Val{:logit}) where {V <: AbstractVector, B <: AbstractVector}
         val = convert(V, map(_bounded_val, z, lo, hi))
         return new{V, B}(z, val, lo, hi)
     end
 end
-BoundedVector(z::V, lo::B, hi::B, ::Val{:logit}) where {V <: AbstractVector, B <: AbstractVector} = BoundedVector{V, B}(z, lo, hi)
+BoundedVector(z::V, lo::B, hi::B, ::Val{:logit}) where {V <: AbstractVector, B <: AbstractVector} = BoundedVector{V, B}(z, lo, hi, Val(:logit))
 
 _conform(val, x::Real) = map(_ -> x, val)
 _conform(val::StaticVector, x::AbstractVector) = similar_type(val)(x)
 _conform(val, x::AbstractVector) = collect(x)
 
-function BoundedVector(val::AbstractVector, lo, hi)
+function _bounded_vector_state(val, lo, hi)   # -> (logit, lo, hi), validated; values clamped to the open intervals
     val = map(float, val)
     lo, hi = _conform(val, lo), _conform(val, hi)
     length(lo) == length(val) == length(hi) || throw(DimensionMismatch("val, lo and hi must have equal length"))
@@ -269,7 +285,15 @@ function BoundedVector(val::AbstractVector, lo, hi)
         v = _clampnan(v, nextfloat(l), prevfloat(h))   # open interval
         log(v - l) - log(h - v)
     end
-    return BoundedVector(z, lo, hi, Val(:logit))
+    return z, lo, hi
+end
+function BoundedVector(val::AbstractVector, lo, hi)
+    z, l, h = _bounded_vector_state(val, lo, hi)
+    return BoundedVector(z, l, h, Val(:logit))
+end
+function BoundedVector{V, B}(val::AbstractVector, lo, hi) where {V <: AbstractVector, B <: AbstractVector}
+    z, l, h = _bounded_vector_state(val, lo, hi)
+    return BoundedVector{V, B}(convert(V, z), convert(B, l), convert(B, h), Val(:logit))
 end
 nvars(::BoundedVector{<:StaticVector{N}}) where N = static(N)
 nvars(v::BoundedVector) = length(v.logit)

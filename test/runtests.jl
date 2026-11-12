@@ -127,6 +127,36 @@ using OptimizationVariableInterface, Static, StaticArrays, Test, ForwardDiff, Aq
     @test isnan(update(s_unit, [NaN]).val)                   # B4
     @test isbitstype(typeof(s_unit)) && isbitstype(typeof(s_pos))
 
+    # B6: parameterized constructors take the *value* (not the log / logit state)
+    @test ZeroToInfScalar{Float64}(2.0).val == 2.0
+    @test ZeroToInfScalar{Float64}(2.0).logval ≈ log(2.0)
+    @test ZeroToInfScalar{Float64}(2).val ≈ 2.0                        # Integer value into float T
+    @test ZeroToInfScalar{Float32}(2.0) isa ZeroToInfScalar{Float32}
+    @test ZeroToInfScalar{Float32}(2.0).val ≈ 2.0f0
+    @test update(ZeroToInfScalar{Float64}(2.0), [0.0]).val ≈ 2.0
+    @test ZeroToOneScalar{Float64}(0.9).val ≈ 0.9 && ZeroToOneScalar{Float64}(0.9).comp ≈ 0.1
+    @test ZeroToOneScalar{Float32}(0.25) isa ZeroToOneScalar{Float32}
+    @test ZeroToOneScalar{Float32}(0.25).val ≈ 0.25f0
+    @test update(ZeroToOneScalar{Float64}(0.9), [0.0]).val ≈ 0.9
+    @test 0 < ZeroToOneScalar{Float64}(1.0).val < 1                    # clamped like the unparameterized form
+    # ... and the raw state is reached only through the tagged forms
+    @test ZeroToInfScalar{Float64}(2.0, Val(:log)).val ≈ exp(2.0)
+    @test ZeroToOneScalar{Float64}(0.0, Val(:logit)).val == 0.5
+    @test ZeroToInfScalar(2.0, Val(:log)).logval == 2.0 && ZeroToOneScalar(0.0, Val(:logit)).comp == 0.5
+    @test BoundedReal{Float64, Float64}(2.0, 1.0, 5.0).val ≈ 2.0
+    @test BoundedReal{Float64, Float64}(2.0, 1.0, 5.0) == BoundedReal(2.0, 1.0, 5.0)
+    @test BoundedReal{Float64, Float64}(2.0, 1.0, 5.0).logit ≈ BoundedReal(2.0, 1.0, 5.0).logit
+    @test BoundedReal{Float32, Float32}(2.0, 1.0, 5.0) isa BoundedReal{Float32, Float32}
+    @test update(BoundedReal{Float64, Float64}(2.0, 1.0, 5.0), [0.0]).val ≈ 2.0
+    @test BoundedReal{Float64, Float64}(0.0, 1.0, 5.0, Val(:logit)).val ≈ 3.0      # tagged form takes the logit
+    @test_throws ArgumentError BoundedReal{Float64, Float64}(0.5, 1.0, 1.0)
+    @test BoundedVector{Vector{Float64}, Vector{Float64}}([2.0, 3.0], [1.0, 1.0], [5.0, 5.0]).val ≈ [2.0, 3.0]
+    @test BoundedVector{SVector{2, Float64}, SVector{2, Float64}}(SVector(2.0, 3.0), SVector(1.0, 1.0), SVector(5.0, 5.0)).val ≈ SVector(2.0, 3.0)
+    @test BoundedVector{SVector{2, Float64}, SVector{2, Float64}}([2.0, 3.0], 1.0, 5.0).val ≈ SVector(2.0, 3.0)
+    @test BoundedVector{Vector{Float64}, Vector{Float64}}([2.0, 3.0], 1.0, 5.0).lo == [1.0, 1.0]
+    @test update(BoundedVector{Vector{Float64}, Vector{Float64}}([2.0, 3.0], 1.0, 5.0), [0.0, 0.0]).val ≈ [2.0, 3.0]
+    @test BoundedVector{Vector{Float64}, Vector{Float64}}([0.0, 0.0], [1.0, 1.0], [5.0, 5.0], Val(:logit)).val ≈ [3.0, 3.0]
+
     # BoundedReal
     br = BoundedReal(2.0, 1.0, 5.0)
     @test nvars(br) === static(1) && isbitstype(typeof(br))

@@ -33,6 +33,7 @@ nvars(::StaticVector{N, <:Number}) where N = static(N)
 @inline nvars(vars::StaticVector) = sum(nvars, Tuple(vars); init=static(0))
 nvars(vars::Vector) = sum(x -> Int(dynamic(nvars(x))), vars; init=0)
 nvars(vars::Vector{<:Number}) = length(vars)
+@inline nvars(t::Union{Tuple, NamedTuple}) = sum(nvars, Tuple(t); init=static(0))
 
 # 2. Out-of-place variable update: update(var, step, start=1) -> newvar
 """
@@ -75,6 +76,13 @@ update(var::StaticVector{N, <:Number}, step::StaticVector{N, <:Number}) where N 
         return similar_type(vars, T)($tuple_expr)
     end
 end
+
+@inline update(t::Tuple{}, step, start=1) = t
+@inline function update(t::Tuple, step, start=1)
+    h = first(t)
+    return (update(h, step, start), update(Base.tail(t), step, start + dynamic(nvars(h)))...)
+end
+@inline update(nt::NamedTuple{K}, step, start=1) where K = NamedTuple{K}(update(Tuple(nt), step, start))
 
 @inline function update(var, step, start=1)
     N = nvars(var)
@@ -236,16 +244,25 @@ isbitsvartype(T) = false
 Returns a copy of `vars` suitable as a scratch buffer:
 - For immutable variables, returns `vars` itself (0 allocations).
 - For a mutable `AbstractArray` (e.g. `Matrix`, `MVector`), returns `copy(vars)`.
-- For a `Vector{T}`, uses shallow `copy(vars)` when `isbitsvartype(T)` is `true` and `deepcopy(vars)` otherwise.
+- For a `Vector{T}`, uses shallow `copy(vars)` when `isbitsvartype(T)` is `true`; otherwise copies each
+  element with `copyvars` (so the policy is per-element and consistent with [`syncvars!`](@ref)).
+- For a `Tuple` or `NamedTuple` of variables, copies each element with `copyvars`.
+
+# Contract
+A variable type with an in-place `update!` (i.e. one that is mutable and not a `Vector`) must also define
+`copyvars` and `syncvars!`: the fallbacks treat unknown types as immutable values, which is only correct
+when `update!` is out-of-place.
 """
 copyvars(x) = x
 copyvars(x::AbstractArray) = ismutable(x) ? copy(x) : x
-copyvars(vars::Vector{T}) where T = isbitsvartype(T) ? copy(vars) : deepcopy(vars)
+copyvars(vars::Vector{T}) where T = isbitsvartype(T) ? copy(vars) : T[copyvars(v) for v in vars]
+copyvars(t::Union{Tuple, NamedTuple}) = map(copyvars, t)
 
 """
     syncvars!(to, from) -> to
 
 Synchronizes variable buffer `to` with `from`. Returns `from` for immutable variables or copies elements in-place for mutable arrays.
+For a `Vector` of non-isbits variables each element is synced with `syncvars!`. For a `Tuple`/`NamedTuple`, returns the tuple of per-element results.
 """
 syncvars!(to, from) = from
 function syncvars!(to::AbstractArray, from::AbstractArray)
@@ -253,10 +270,17 @@ function syncvars!(to::AbstractArray, from::AbstractArray)
     copyto!(to, from)
     return to
 end
-function syncvars!(to::Vector, from::Vector)
-    copyto!(to, from)
+function syncvars!(to::Vector{T}, from::Vector) where T
+    if isbitsvartype(T)
+        copyto!(to, from)
+    else
+        @inbounds for i in eachindex(to, from)   # per-element, consistent with `copyvars`
+            to[i] = syncvars!(to[i], from[i])
+        end
+    end
     return to
 end
+syncvars!(to::Union{Tuple, NamedTuple}, from::Union{Tuple, NamedTuple}) = map(syncvars!, to, from)
 
 # 6. Manifold variable wrappers (methods defined in extension OVIManifoldsBaseExt)
 """

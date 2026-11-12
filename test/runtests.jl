@@ -169,6 +169,28 @@ using OptimizationVariableInterface, Static, StaticArrays, Test, ForwardDiff
     sv_b2 = update(sv_b, SVector(0.0, log(2.0)))
     @test sv_b2[1].val ≈ 2.0 && sv_b2[2].val ≈ 2.0
 
+    # M5: Tuple / NamedTuple of variables
+    tup = (1.0, SVector(1.0, 2.0), ZeroToInfScalar(2.0), br)
+    @test nvars(tup) === static(1 + 2 + 1 + 1)
+    @test nvars(()) === static(0)
+    tup_new = update(tup, [0.5, 0.1, 0.2, log(2.0), 0.0])
+    @test tup_new isa Tuple && length(tup_new) == 4
+    @test tup_new[1] == 1.5 && tup_new[2] === SVector(1.1, 2.2)
+    @test tup_new[3].val ≈ 4.0 && tup_new[4].val ≈ 2.0
+    @test update(tup, [9.0, 0.5, 0.1, 0.2, log(2.0), 0.0], 2)[1] == 1.5
+    @test update((), Float64[]) === ()
+    nt = (a = 1.0, b = SVector(1.0, 2.0))
+    @test nvars(nt) === static(3)
+    nt_new = update(nt, [0.5, 0.1, 0.2])
+    @test nt_new isa NamedTuple{(:a, :b)} && nt_new.a == 1.5 && nt_new.b === SVector(1.1, 2.2)
+    @test (@allocated update(tup, [0.5, 0.1, 0.2, 0.0, 0.0])) < 200   # no Vector{Union}; small
+    @test update!(copyvars(tup), tup, [0.5, 0.1, 0.2, log(2.0), 0.0])[1] == 1.5
+    tup_mut = (zeros(2), 1.0)
+    tup_mut_copy = copyvars(tup_mut)
+    @test tup_mut_copy[1] == tup_mut[1] && tup_mut_copy[1] !== tup_mut[1]
+    tup_sync = syncvars!(tup_mut_copy, ([5.0, 6.0], 2.0))
+    @test tup_sync == ([5.0, 6.0], 2.0) && tup_sync[1] === tup_mut_copy[1]
+
     # 3. update! (in-place / unified)
     # Immutable fallback
     @test update!(0.0, 2.0, [0.5]) == 2.5
@@ -229,6 +251,19 @@ using OptimizationVariableInterface, Static, StaticArrays, Test, ForwardDiff
     mdest = zeros(2, 2)
     @test syncvars!(mdest, mat) === mdest && mdest == mat
     @test syncvars!(MVector(0.0, 0.0), mv) isa MVector
+
+    # M1: per-element policy for Vectors of non-isbits variables
+    inner = [[1.0, 2.0], [3.0]]
+    inner_copy = copyvars(inner)
+    @test inner_copy == inner && inner_copy[1] !== inner[1]
+    inner_dest = copyvars(inner)
+    inner_src = [[7.0, 8.0], [9.0]]
+    syncvars!(inner_dest, inner_src)
+    @test inner_dest == inner_src
+    @test inner_dest[1] !== inner_src[1]     # elements are synced, not aliased
+    mixed_dest = Any[[0.0, 0.0], SVector(0.0, 0.0)]
+    syncvars!(mixed_dest, Any[[1.0, 2.0], SVector(3.0, 4.0)])
+    @test mixed_dest == Any[[1.0, 2.0], SVector(3.0, 4.0)]
 
     # syncvars! on Vector
     dest_vec = [0.0, 0.0]

@@ -119,7 +119,7 @@ function OptimizationVariableInterface.syncvars!(to::Vector{<:ManifoldVar}, from
         copyto!(to, from)
     else
         @inbounds for i in eachindex(to, from)
-            OptimizationVariableInterface.syncvars!(to[i].point, from[i].point)
+            to[i] = OptimizationVariableInterface.syncvars!(to[i], from[i])
         end
     end
     return to

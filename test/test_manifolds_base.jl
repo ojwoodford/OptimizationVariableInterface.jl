@@ -177,6 +177,16 @@ eye3() = [1.0 0.0 0.0; 0.0 1.0 0.0; 0.0 0.0 1.0]
           ManifoldVar(p_static, M_type; byref = false).context.retraction
     @test ManifoldContext(M_type).retraction == ManifoldsBase.default_retraction_method(M_type)
 
+    # nvars of manifolds themselves
+    @test nvars(M_type) === static(3)
+    @test nvars(M_field) == 3 && !(nvars(M_field) isa Static.StaticInt)
+
+    # Explicit non-static dimension in the context takes the dynamic-view update path
+    ctx_dyn = ManifoldContext(M_type, ManifoldsBase.DefaultOrthonormalBasis(), ManifoldsBase.default_retraction_method(M_type), 3)
+    v_dyn = ManifoldVar(p_static, ctx_dyn)
+    @test nvars(v_dyn) == 3 && !(nvars(v_dyn) isa Static.StaticInt)
+    @test update(v_dyn, [9.0, 0.1, 0.2, -0.3], 2).point ≈ SVector(1.1, 2.2, 2.7)
+
     # 10. Regression: immutable-point single ManifoldVar syncvars! must return the source
     sync_to = ManifoldVar(SVector(0.0, 0.0, 0.0), M_type)
     sync_from = ManifoldVar(SVector(1.0, 2.0, 3.0), M_type)

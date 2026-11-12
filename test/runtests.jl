@@ -266,6 +266,8 @@ using OptimizationVariableInterface, Static, StaticArrays, Test, ForwardDiff, Aq
         @test sin.([0.0, 1.0] .+ w) == sin.([0.0, 1.0] .+ x)
         @test sum(w * ones(3)) ≈ 3x
     end
+    @test scalars[1] ≈ scalars[1] && isapprox(scalars[3], scalars[3])
+    @test 2.0 \ scalars[1] == scalars[1].val / 2.0 && scalars[1] \ [1.0, 2.0] == scalars[1].val \ [1.0, 2.0]
     @test hypot(scalars[1], scalars[3]) == hypot(scalars[1].val, scalars[3].val)
     @test scalars[1] + scalars[3] == scalars[1].val + scalars[3].val
 
@@ -273,7 +275,8 @@ using OptimizationVariableInterface, Static, StaticArrays, Test, ForwardDiff, Aq
     x3 = bvf.val
     @test length(bvf) == 3 && size(bvf) == (3,) && axes(bvf) == (Base.OneTo(3),) && bvf[2] == x3[2] && bvf[2:3] == x3[2:3]
     @test first(bvf) == x3[1] && last(bvf) == x3[3] && lastindex(bvf) == 3 && collect(bvf) == x3 && eltype(bvf) == Float64
-    @test [e for e in bvf] == x3
+    @test [e for e in bvf] == x3 && firstindex(bvf) == 1
+    @test 2 \ bvf == 2 \ x3 && bvf \ bvf == x3 \ x3 && bvf ≈ bvf
     @test +bvf == x3 && -bvf == -x3 && bvf + bvf == 2x3 && bvf - x3 == zeros(3) && x3 + bvf == 2x3
     @test bvf * 2 == 2x3 && 2 * bvf == 2x3 && bvf / 2 == x3 / 2 && sum(bvf) == sum(x3) && maximum(bvf) == maximum(x3)
     @test minimum(bvf) == minimum(x3) && extrema(bvf) == extrema(x3) && reverse(bvf) == reverse(x3) && cumsum(bvf) == cumsum(x3)
@@ -316,6 +319,7 @@ using OptimizationVariableInterface, Static, StaticArrays, Test, ForwardDiff, Aq
     @test !isbitsvartype(Union{SVector{3, Float64}, Vector{Float64}})
     @test !isbitsvartype(Any)
     @test !isbitsvartype(SVector{3})
+    @test !isbitsvartype(Ref{Any}(SVector{3})[])   # non-constant UnionAll argument
     @test !isbitsvartype(Complex)
 
     # Immutable copyvars / syncvars!

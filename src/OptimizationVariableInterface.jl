@@ -347,9 +347,7 @@ Base.isapprox(a::AbstractArray, b::BoundedVector; kw...) = isapprox(a, b.val; kw
 
 Returns `true` if `T` is an `isbitstype` or a `Union` of `isbitstype` types.
 """
-isbitsvartype(T::DataType) = isbitstype(T)
-isbitsvartype(T::Union) = isbitsvartype(T.a) && isbitsvartype(T.b)
-isbitsvartype(T) = false
+isbitsvartype(T) = T isa DataType ? isbitstype(T) : (T isa Union && isbitsvartype(T.a) && isbitsvartype(T.b))
 
 """
     copyvars(vars)

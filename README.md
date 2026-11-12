@@ -222,7 +222,7 @@ p = @SVector [1.0, 0.0, 0.0]
 
 # Wrap point with its manifold
 var = ManifoldVar(p, M)
-nvars(var) # 3 (intrinsic degrees of freedom)
+nvars(var) # static(3) (intrinsic degrees of freedom, always a compile-time constant)
 
 # Optimizer computes a 3D tangent step:
 step = [0.1, 0.2, -0.1]
@@ -235,11 +235,11 @@ When thousands of variables share the same manifold (e.g. camera poses or landma
 - **By-Value (`byref = false`)**: For 0-byte singleton manifolds (`parameter = :type`) or small `isbits` manifolds ($\le 16$ bytes), the manifold context is stored directly inline with zero pointer indirection.
 - **By-Reference (`byref = true`)**: For larger or non-`isbits` manifolds, the manifold, basis, and retraction are bundled into a single `Base.RefValue`. Each variable stores **only one 8-byte pointer**, sharing the single heap-allocated manifold instance.
 
-The constructor automatically selects the optimal strategy (`byref = (!isbitstype(C) || sizeof(C) > 16)`), or you can specify it explicitly:
+`ManifoldVar(point, manifold)` and `manifoldcontext(manifold)` automatically select the optimal strategy (`byref = (!isbitstype(C) || sizeof(C) > 16)`), or you can specify it explicitly:
 
 ```julia
 # Explicitly share a single context across 10,000 points:
-ctx = ManifoldContext(M; byref = true)
+ctx = manifoldcontext(M; byref = true)
 vars = [ManifoldVar(points[i], ctx) for i in 1:10000]
 
 # All variables share the exact same context reference:

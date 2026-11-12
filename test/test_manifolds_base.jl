@@ -39,7 +39,7 @@ eye3() = [1.0 0.0 0.0; 0.0 1.0 0.0; 0.0 0.0 1.0]
     # 2. Field-parameterized manifold (parameter = :field)
     M_field = ManifoldsBase.DefaultManifold(3; parameter = :field)
     v_field = ManifoldVar(p_static, M_field)
-    @test nvars(v_field) == 3 && !(nvars(v_field) isa Static.StaticInt)
+    @test nvars(v_field) === static(3)   # M2: always static, even for field-parameterized manifolds
     v_field_new = update(v_field, step)
     @test v_field_new.point ≈ SVector(1.1, 2.2, 2.7)
 
@@ -63,7 +63,7 @@ eye3() = [1.0 0.0 0.0; 0.0 1.0 0.0; 0.0 0.0 1.0]
     @test v_val.context isa ManifoldContext
 
     # 4. Context sharing across multiple variables
-    ctx_ref = ManifoldContext(M_type; byref = true)
+    ctx_ref = manifoldcontext(M_type; byref = true)
     vars_shared = [ManifoldVar(SVector(Float64(i), 0.0, 0.0), ctx_ref) for i in 1:10]
     for i in 1:10
         @test vars_shared[i].context === ctx_ref
@@ -157,6 +157,25 @@ eye3() = [1.0 0.0 0.0; 0.0 1.0 0.0; 0.0 0.0 1.0]
     @test mixed_to[2].val ≈ 4.0
     @test mixed_to[3] === SVector(1.1, 1.9)
     @test mixed_to[4].point ≈ SVector(0.2, 1.2, 0.2)
+
+    # M2: static dimension is captured in the context at no size cost
+    ctx_field = ManifoldContext(M_field)
+    @test ctx_field.dim === static(3) && sizeof(ctx_field.dim) == 0
+    @test nvars(ManifoldVar(zeros(2, 3, 4), M_large)) === static(24)
+    @test ManifoldContext(M_type, ManifoldsBase.DefaultOrthonormalBasis(), ManifoldsBase.default_retraction_method(M_type)).dim === static(3)
+
+    # M3: ManifoldContext(...) always returns a ManifoldContext; manifoldcontext chooses storage
+    @test ManifoldContext(M_type) isa ManifoldContext
+    @test ManifoldContext(M_large) isa ManifoldContext
+    @test manifoldcontext(M_type) isa ManifoldContext
+    @test manifoldcontext(M_large) isa Base.RefValue
+    @test manifoldcontext(M_type; byref = true) isa Base.RefValue
+    @test manifoldcontext(M_large; byref = false) isa ManifoldContext
+
+    # M4: same default retraction in both paths
+    @test ManifoldContext(M_type; pointtype = typeof(p_static)).retraction ==
+          ManifoldVar(p_static, M_type; byref = false).context.retraction
+    @test ManifoldContext(M_type).retraction == ManifoldsBase.default_retraction_method(M_type)
 
     # 10. Regression: immutable-point single ManifoldVar syncvars! must return the source
     sync_to = ManifoldVar(SVector(0.0, 0.0, 0.0), M_type)

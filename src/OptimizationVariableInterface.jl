@@ -5,7 +5,7 @@ using Static, StaticArrays
 export nvars, update, update!, copyvars, syncvars!, isbitsvartype, iseliminable
 export ZeroToInfScalar, ZeroToOneScalar, BoundedReal
 export distlo, disthi
-export ManifoldVar, ManifoldContext
+export ManifoldVar, ManifoldContext, manifoldcontext
 
 SR(first, last) = StaticArrays.SUnitRange(dynamic(first), dynamic(last))
 
@@ -284,18 +284,31 @@ syncvars!(to::Union{Tuple, NamedTuple}, from::Union{Tuple, NamedTuple}) = map(sy
 
 # 6. Manifold variable wrappers (methods defined in extension OVIManifoldsBaseExt)
 """
-    ManifoldContext(manifold, basis, retraction)
+    ManifoldContext(manifold, basis, retraction, dim)
 
-Bundles a manifold, tangent basis, and retraction method for a manifold variable.
-When `ManifoldsBase` is loaded, constructors accepting an `AbstractManifold` are provided,
-supporting both by-value storage (for small isbits manifolds) and by-reference storage
-(via `Base.RefValue`) for larger or non-isbits manifolds.
+Bundles a manifold, tangent basis, retraction method and the manifold dimension `dim` (a `StaticInt`,
+so that `nvars` of a manifold variable is always static) for a manifold variable.
+When `ManifoldsBase` is loaded, `ManifoldContext(manifold, basis, retraction)` computes `dim` itself, and
+`ManifoldContext(manifold; basis=..., retraction=..., pointtype=...)` fills in defaults. Both always return a
+`ManifoldContext`; use [`manifoldcontext`](@ref) to choose between by-value and by-reference storage.
 """
-struct ManifoldContext{M, B, R}
+struct ManifoldContext{M, B, R, D}
     manifold::M
     basis::B
     retraction::R
+    dim::D
 end
+
+"""
+    manifoldcontext(manifold; basis=..., retraction=..., pointtype=nothing, byref=nothing)
+
+Factory for a context to share between manifold variables. Returns a `ManifoldContext` stored by value
+(for small isbits contexts), or a `Base.RefValue{<:ManifoldContext}` for by-reference storage (larger or
+non-isbits contexts); `byref` forces the choice. If `pointtype` is given, the default retraction is
+`default_retraction_method(manifold, pointtype)`, otherwise `default_retraction_method(manifold)`.
+Defined in the `ManifoldsBase` extension.
+"""
+function manifoldcontext end
 
 """
     ManifoldVar(point, context)

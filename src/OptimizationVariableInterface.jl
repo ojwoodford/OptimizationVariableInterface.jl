@@ -109,30 +109,68 @@ end
 end
 
 # 4. Built-in variable types
+# Smallest/largest positive values used to keep `exp`-derived values finite and non-zero.
+# Non-`AbstractFloat` reals (e.g. autodiff duals) fall back to the `Float64` limits.
+_tiny(::Type{T}) where {T<:AbstractFloat} = floatmin(T)
+_tiny(::Type{<:Real}) = floatmin(Float64)
+_huge(::Type{T}) where {T<:AbstractFloat} = floatmax(T)
+_huge(::Type{<:Real}) = floatmax(Float64)
+# Clamp to [lo, hi], letting NaN propagate
+@inline _clampnan(x, lo, hi) = ifelse(x < lo, lo, ifelse(x > hi, hi, x))
+
+# Stable logistic function: returns (p, 1 - p) computed from one `exp`, without cancellation.
+@inline function _logistic_pair(z)
+    e = exp(-abs(z))             # in [0, 1]
+    a, b = inv(1 + e), e / (1 + e)   # larger and smaller of p, 1 - p
+    return z >= 0 ? (a, b) : (b, a)
+end
+
 """
     ZeroToInfScalar(val)
 
 Positive scalar variable parameterized on `(0, Inf)` via multiplicative exponential retraction.
+The state is stored as `logval = log(val)`, so retraction is one exact addition; `val = exp(logval)`
+is cached (clamped to `[floatmin, floatmax]`). `NaN` propagates.
 """
 struct ZeroToInfScalar{T}
-    val::T
+    logval::T   # source of truth
+    val::T      # cached exp(logval)
+    function ZeroToInfScalar{T}(z::T) where T
+        return new{T}(z, _clampnan(exp(z), _tiny(T), _huge(T)))
+    end
+end
+ZeroToInfScalar(z::T, ::Val{:log}) where T = ZeroToInfScalar{T}(z)
+function ZeroToInfScalar(val::Real)
+    v = float(val)
+    return ZeroToInfScalar(log(_clampnan(v, _tiny(typeof(v)), _huge(typeof(v)))), Val(:log))
 end
 nvars(::ZeroToInfScalar) = static(1)
-update(var::ZeroToInfScalar, updatevec, start=1) = ZeroToInfScalar(ifelse(var.val > 0, var.val, floatmin(var.val)) * exp(@inbounds(updatevec[start])))
+update(var::ZeroToInfScalar, updatevec, start=1) = ZeroToInfScalar(var.logval + @inbounds(updatevec[start]), Val(:log))
 
 """
     ZeroToOneScalar(val)
 
-Bounded scalar variable parameterized on `(0, 1)` via logistic-exponential retraction.
+Bounded scalar variable parameterized on the open interval `(0, 1)` via logistic retraction
+(`logit(p') = logit(p) + step`). The state is stored as `logit`; `val = p` and `comp = 1 - p` are
+cached and computed without cancellation, so both are accurate near either end. `NaN` propagates.
 """
 struct ZeroToOneScalar{T}
-    val::T
+    logit::T   # source of truth
+    val::T     # cached p = 1 / (1 + exp(-logit))
+    comp::T    # cached 1 - p, computed directly
+    function ZeroToOneScalar{T}(z::T) where T
+        p, q = _logistic_pair(z)
+        return new{T}(z, p, q)
+    end
+end
+ZeroToOneScalar(z::T, ::Val{:logit}) where T = ZeroToOneScalar{T}(z)
+function ZeroToOneScalar(p::Real)   # clamped to the open interval
+    f = float(p)
+    q = _clampnan(f, nextfloat(zero(f)), prevfloat(one(f)))
+    return ZeroToOneScalar(log(q) - log1p(-q), Val(:logit))
 end
 nvars(::ZeroToOneScalar) = static(1)
-function update(var::ZeroToOneScalar, updatevec, start=1)
-    val = ifelse(var.val > 0, var.val, floatmin(var.val)) * exp(@inbounds(updatevec[start]))
-    return ZeroToOneScalar(ifelse(val < Inf, val / (1 + (val - var.val)), one(val)))
-end
+update(var::ZeroToOneScalar, updatevec, start=1) = ZeroToOneScalar(var.logit + @inbounds(updatevec[start]), Val(:logit))
 
 # 5. Scratch buffer allocation & syncing
 """

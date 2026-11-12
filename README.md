@@ -263,8 +263,8 @@ The package includes default implementations for standard types as well as commo
 | `StaticVector{N, T}` | $\sum \text{nvars}$ (`StaticInt` if static) | Unrolled block retraction across elements (0 heap allocations) |
 | `Vector{<:Number}` | `length(v)` | In-place vector addition |
 | `Vector{T}` (blocks) | $\sum \text{nvars}$ | Block retraction across elements |
-| `ZeroToInfScalar{T}(val)` | `static(1)` | Constrained to $(0, \infty)$ via multiplicative exponential map: $x \cdot e^{\Delta x}$ |
-| `ZeroToOneScalar{T}(val)` | `static(1)` | Constrained to $(0, 1)$ via logistic-exponential retraction |
+| `ZeroToInfScalar{T}(val)` | `static(1)` | Constrained to $(0, \infty)$; stores `log(val)` and caches `val`, so retraction is exact: $x \cdot e^{\Delta x}$ |
+| `ZeroToOneScalar{T}(val)` | `static(1)` | Constrained to $(0, 1)$; stores the logit and caches `val` and `comp = 1 - val`; retraction adds to the logit |
 | `ManifoldVar{P, C}` | `manifold_dimension(M)` | Retracts point along tangent vector via `get_vector` and `retract` |
 | Fallback `Any` | `length(x)` | Retracts via `x + @inbounds(view(step, ...))` |
 

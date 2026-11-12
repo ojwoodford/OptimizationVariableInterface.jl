@@ -84,17 +84,45 @@ using OptimizationVariableInterface, Static, StaticArrays, Test
     s_pos = ZeroToInfScalar(2.0)
     @test update(s_pos, [0.0]).val ≈ 2.0
     @test update(s_pos, [log(3.0)]).val ≈ 6.0
-    @test update(ZeroToInfScalar(0.0), [0.0]).val == floatmin(Float64)
+    @test update(ZeroToInfScalar(0.0), [0.0]).val ≈ floatmin(Float64) rtol=1e-10
+    @test ZeroToInfScalar(3).val ≈ 3.0                      # integer input
+    @test update(s_pos, [1e4]).val == floatmax(Float64)      # B5: clamped, not Inf
+    @test update(update(s_pos, [1e4]), [-1e4]).val ≈ 2.0     # ...and not stuck
+    @test update(s_pos, [-1e4]).val == floatmin(Float64)
+    @test isnan(update(s_pos, [NaN]).val)                    # B4: NaN propagates
+    @test isnan(ZeroToInfScalar(NaN).val)
 
     # ZeroToOneScalar
     s_unit = ZeroToOneScalar(0.5)
     @test update(s_unit, [0.0]).val ≈ 0.5
+    @test s_unit.val ≈ 0.5 && s_unit.comp ≈ 0.5
     s_inc = update(s_unit, [1.0])
     @test 0.5 < s_inc.val < 1.0
     s_dec = update(s_unit, [-1.0])
     @test 0.0 < s_dec.val < 0.5
-    @test update(s_unit, [1000.0]).val == 1.0
+    @test update(s_unit, [1000.0]).val == 1.0 && update(s_unit, [1000.0]).comp == 0.0
+    @test update(update(s_unit, [1000.0]), [-1000.0]).val ≈ 0.5   # not stuck at 1
+    @test update(s_unit, [30.0]).val < 1.0
+    @test update(s_unit, [30.0]).comp ≈ exp(-30) rtol=1e-12
     @test update(ZeroToOneScalar(0.0), [0.0]).val > 0.0
+    @test 0.0 < ZeroToOneScalar(1.0).val <= 1.0 && isfinite(ZeroToOneScalar(1.0).logit)
+    @test ZeroToOneScalar(0.3).val ≈ 0.3 && ZeroToOneScalar(0.3).comp ≈ 0.7
+    @test ZeroToOneScalar(1).val > 0.5                       # integer input
+    # B3: from the top end, steps give the exact logistic result, never leaving (0, 1)
+    top = ZeroToOneScalar(prevfloat(1.0))
+    for (step, expected) in ((-1.0, 0.9999999999999997), (-36.0, 0.676), (-37.0, 0.435), (-50.0, 1.737e-6))
+        r = update(top, [step])
+        @test 0 < r.val < 1
+        @test r.val ≈ expected rtol=5e-3
+    end
+    # Consistency: val + comp == 1 and val = logistic(logit) over a range of logits
+    for z in (-800.0, -50.0, -1.0, 0.0, 1.0, 50.0, 800.0)
+        v = ZeroToOneScalar(z, Val(:logit))
+        @test v.val + v.comp ≈ 1.0
+        @test !isnan(v.val) && !isnan(v.comp)
+    end
+    @test isnan(update(s_unit, [NaN]).val)                   # B4
+    @test isbitstype(typeof(s_unit)) && isbitstype(typeof(s_pos))
 
     # 3. update! (in-place / unified)
     # Immutable fallback

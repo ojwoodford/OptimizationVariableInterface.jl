@@ -1,6 +1,8 @@
-using OptimizationVariableInterface, Static, StaticArrays, Test, ForwardDiff
+using OptimizationVariableInterface, Static, StaticArrays, Test, ForwardDiff, Aqua
 
 @testset "OptimizationVariableInterface.jl" begin
+    Aqua.test_all(OptimizationVariableInterface)
+
     # 1. nvars
     @test nvars(2.5) === static(1)
     @test nvars(42) === static(1)

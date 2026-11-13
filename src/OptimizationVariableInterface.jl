@@ -392,16 +392,15 @@ A custom type with an in-place `update!` must define `copyvars`, `syncvars!` and
 `ismutablevar(::Type{<:MyType}) = true`.
 """
 ismutablevar(x) = ismutablevar(typeof(x))
-ismutablevar(::Type) = false                                             # values, and types that have not opted in
+ismutablevar(@nospecialize(::Type)) = false                                             # values, and types that have not opted in
 ismutablevar(::Type{T}) where {T <: AbstractArray} = Base.ismutabletype(T)
 ismutablevar(::Type{T}) where {T <: Tuple} = _all_mutablevar(T)
 ismutablevar(::Type{NamedTuple{K, T}}) where {K, T} = ismutablevar(T)
 
 # True when every element type of the tuple type is `ismutablevar` (true for the empty tuple).
-_all_mutablevar(::Type{Tuple{}}) = true
-Base.@assume_effects :foldable function _all_mutablevar(::Type{T}) where {T <: Tuple}
-    Base.isvarargtype(Base.tuple_type_head(T)) && return false
-    return ismutablevar(Base.tuple_type_head(T)) && _all_mutablevar(Base.tuple_type_tail(T))
+Base.@assume_effects :foldable function _all_mutablevar(@nospecialize(T::Type))
+    Base.isvatuple(T) && return false   # abstract: length unknown
+    return all(ismutablevar, Base.unwrap_unionall(T).parameters)
 end
 
 """

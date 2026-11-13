@@ -498,6 +498,13 @@ end
         @test (x isa MutOpt ? c.a == n.a : c == n)
     end
 
+    # runtime (non-folded) evaluation, so the folded method bodies are exercised and counted
+    for (x, expected) in ((Float64[1], true), (([1.0], SVector(1.0)), false), (([1.0], [2.0]), true), (Tuple{}, true), ((a = [1.0],), true))
+        T = Ref{Any}(x isa Type ? x : typeof(x))[]
+        @test Base.invokelatest(ismutablevar, T) === expected
+        @test Base.invokelatest(OptimizationVariableInterface._all_mutablevar, Tuple{Vector{Float64}, Vararg{Vector{Float64}}}) === false
+    end
+
     # compile-time constant
     g(x) = ismutablevar(x) ? 1 : 2.0
     for x in (Float64[1], SVector(1.0), ([1.0], [2.0]), ([1.0], SVector(1.0)))

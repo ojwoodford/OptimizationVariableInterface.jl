@@ -124,7 +124,7 @@ end
 
 # 6. syncvars!
 @inline function OptimizationVariableInterface.syncvars!(to::ManifoldVar, from::ManifoldVar)
-    ismutable(to.point) || return from
+    OptimizationVariableInterface.ismutablevar(to.point) || return from
     OptimizationVariableInterface.syncvars!(to.point, from.point)
     return to
 end

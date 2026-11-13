@@ -1,6 +1,6 @@
 name = "OptimizationVariableInterface"
 uuid = "f1c3d78e-8b2a-4c9d-9e4f-4a7b6c0d3e17"
-version = "0.2.1"
+version = "0.3.0"
 authors = ["Oliver Woodford"]
 
 [deps]
@@ -10,7 +10,7 @@ StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 [compat]
 Aqua = "0.8"
 ForwardDiff = "0.10, 1"
-ManifoldsBase = "0.15"
+ManifoldsBase = "2"
 LinearAlgebra = "1"
 Static = "0.8.7, 1"
 Test = "1"

@@ -2,7 +2,7 @@ module OptimizationVariableInterface
 
 using Static, StaticArrays
 
-export nvars, update, update!, copyvars, syncvars!, isbitsvartype, iseliminable
+export nvars, update, update!, copyvars, syncvars!, ismutablevar, isbitsvartype, iseliminable
 export ZeroToInfScalar, ZeroToOneScalar, BoundedReal, BoundedVector
 export distlo, disthi
 export ManifoldVar, ManifoldContext, manifoldcontext
@@ -374,6 +374,37 @@ Returns `true` if `T` is an `isbitstype` or a `Union` of `isbitstype` types.
 isbitsvartype(T) = T isa DataType ? isbitstype(T) : (T isa Union && isbitsvartype(T.a) && isbitsvartype(T.b))
 
 """
+    ismutablevar(x) -> Bool
+    ismutablevar(::Type{T}) -> Bool
+
+Whether a variable (or container of variables) of this type is updated in place: that is, whether
+`syncvars!(x, y)` writes `y`'s values into `x` and returns `x` itself, so that the caller's `x` holds
+the result. When it is `false`, `x` is treated as an immutable value: `copyvars(x)` returns `x`, and
+`syncvars!(x, y)` returns `y`.
+
+This is not `Base.ismutable`. A tuple of mutable arrays is updated in place although a tuple is
+immutable; a `mutable struct` that has not opted in is not.
+
+The defining property: for `y` of the same type as `x` but with different contents,
+`ismutablevar(x) == (syncvars!(x, y) === x)`.
+
+A custom type with an in-place `update!` must define `copyvars`, `syncvars!` and
+`ismutablevar(::Type{<:MyType}) = true`.
+"""
+ismutablevar(x) = ismutablevar(typeof(x))
+ismutablevar(::Type) = false                                             # values, and types that have not opted in
+ismutablevar(::Type{T}) where {T <: AbstractArray} = Base.ismutabletype(T)
+ismutablevar(::Type{T}) where {T <: Tuple} = _all_mutablevar(T)
+ismutablevar(::Type{NamedTuple{K, T}}) where {K, T} = ismutablevar(T)
+
+# True when every element type of the tuple type is `ismutablevar` (true for the empty tuple).
+_all_mutablevar(::Type{Tuple{}}) = true
+Base.@assume_effects :foldable function _all_mutablevar(::Type{T}) where {T <: Tuple}
+    Base.isvarargtype(Base.tuple_type_head(T)) && return false
+    return ismutablevar(Base.tuple_type_head(T)) && _all_mutablevar(Base.tuple_type_tail(T))
+end
+
+"""
     copyvars(vars)
 
 Returns a copy of `vars` suitable as a scratch buffer:
@@ -386,10 +417,11 @@ Returns a copy of `vars` suitable as a scratch buffer:
 # Contract
 A variable type with an in-place `update!` (i.e. one that is mutable and not a `Vector`) must also define
 `copyvars` and `syncvars!`: the fallbacks treat unknown types as immutable values, which is only correct
-when `update!` is out-of-place.
+when `update!` is out-of-place. Such a type must also define `ismutablevar(::Type{<:MyType}) = true`
+(see [`ismutablevar`](@ref)), so that `ismutablevar(x) == (syncvars!(x, y) === x)` holds.
 """
 copyvars(x) = x
-copyvars(x::AbstractArray) = ismutable(x) ? copy(x) : x
+copyvars(x::AbstractArray) = ismutablevar(x) ? copy(x) : x
 copyvars(vars::Vector{T}) where T = isbitsvartype(T) ? copy(vars) : T[copyvars(v) for v in vars]
 copyvars(t::Union{Tuple, NamedTuple}) = map(copyvars, t)
 
@@ -401,7 +433,7 @@ For a `Vector` of non-isbits variables each element is synced with `syncvars!`. 
 """
 syncvars!(to, from) = from
 function syncvars!(to::AbstractArray, from::AbstractArray)
-    ismutable(to) || return from
+    ismutablevar(to) || return from
     copyto!(to, from)
     return to
 end
@@ -456,6 +488,7 @@ struct ManifoldVar{P, C}
     point::P
     context::C
 end
+ismutablevar(::Type{ManifoldVar{P, C}}) where {P, C} = ismutablevar(P)
 
 Base.convert(::Type{ManifoldVar{P, C}}, v::ManifoldVar) where {P, C} =
     ManifoldVar{P, C}(convert(P, v.point), convert(C, v.context))

@@ -124,12 +124,13 @@ svec_next = update(svec, SVector(log(2.0), log(3.0)))
 
 ## 3. How an Optimizer Uses the Interface
 
-Optimization solvers use four core functions to manage state, allocate buffers, and apply steps:
+Optimization solvers use five core functions to manage state, allocate buffers, and apply steps:
 
 - `nvars(x)`: Determines the dimension of the tangent space to size linear systems, gradients, or Hessian matrices.
 - `copyvars(x)`: Allocates scratch buffers for candidate states (zero allocations for immutable types; shallow copies for `isbits` vectors).
 - `update!(to, from, step)`: Retracts candidate variables along the tangent step.
 - `syncvars!(to, from)`: Synchronizes state when a step is accepted.
+- `ismutablevar(x)`: Whether `x` is updated in place, so an optimizer can decide between a mutating and a non-mutating entry point.
 
 ### Example: A Minimal Manifold Newton Optimizer
 
@@ -308,9 +309,21 @@ update(bv, SVector(0.1, -0.1)).val
 | `update!(to, from, step)` | Unified / in-place retraction | Mutates `to` in-place for `Vector`s; returns `update(from, step)` for immutables. Always use as `to = update!(to, from, step)`. |
 | `copyvars(x)` | Buffer allocation | Returns `x` for immutables (0 allocations); `copy` for mutable arrays (`Matrix`, `MVector`, ...) and for `Vector`s of `isbits` elements; per-element `copyvars` for other `Vector`s, `Tuple`s and `NamedTuple`s. |
 | `syncvars!(to, from)` | State synchronization | Copies in-place for mutable arrays (per-element for `Vector`s of non-isbits blocks); returns `from` for immutables; returns a tuple of per-element results for `Tuple`/`NamedTuple`. Always use as `to = syncvars!(to, from)`. |
+| `ismutablevar(x)` / `ismutablevar(T)` | In-place trait | Whether `syncvars!(x, y)` writes into `x` and returns `x`. Defining property: `ismutablevar(x) == (syncvars!(x, y) === x)` for `y` of the same type. Not `Base.ismutable`: a tuple of `Vector`s is `true`, a `mutable struct` that has not opted in is `false`. |
 | `isbitsvartype(T)` | Type introspection | Returns `true` if `T` is an `isbitstype` `DataType` or a `Union` of `isbitstype` types. |
 | `iseliminable(V)` | Schur complement trait | Returns `static(true)` if variable type `V` can be eliminated (marginalized) in a Schur complement; defaults to `static(false)`. |
 
 ### Contract for custom mutable variable types
 
-The fallbacks treat unknown types as immutable values, which is only correct while `update!` is out-of-place. A custom type that is updated **in place** (mutable, and not a `Vector`/`Matrix`/other `AbstractArray`) must also define `copyvars` (to allocate an independent scratch copy) and `syncvars!` (to copy state into it), otherwise a rejected trial step would overwrite the current iterate.
+The fallbacks treat unknown types as immutable values, which is only correct while `update!` is out-of-place. A custom type that is updated **in place** (mutable, and not a `Vector`/`Matrix`/other `AbstractArray`) must also define `copyvars` (to allocate an independent scratch copy), `syncvars!` (to copy state into it) and `ismutablevar(::Type{<:MyType}) = true`, otherwise a rejected trial step would overwrite the current iterate.
+
+An in-place type therefore needs four methods (`update!`, `copyvars`, `syncvars!`, `ismutablevar`); an out-of-place type needs none of them.
+
+### Example: requiring in-place variables
+
+```julia
+function optimize!(x0, ...)
+    ismutablevar(x0) || throw(ArgumentError("optimize! needs variables it can update in place; $(typeof(x0)) is treated as an immutable value. Use optimize instead."))
+    ...
+end
+```

@@ -418,6 +418,96 @@ using OptimizationVariableInterface, Static, StaticArrays, Test, ForwardDiff, Aq
     @test iseliminable(CustomPoint3D(SVector(1.0, 2.0, 3.0))) === static(true)
 end
 
+@testset "ismutablevar" begin
+    using StaticArrays
+    mutable struct MutNoOpt; a::Vector{Float64}; end
+    mutable struct MutOpt; a::Vector{Float64}; end
+    OptimizationVariableInterface.update!(to::MutOpt, from::MutOpt, step::AbstractVector) = (to.a .= from.a .+ step; to)
+    OptimizationVariableInterface.copyvars(x::MutOpt) = MutOpt(copy(x.a))
+    OptimizationVariableInterface.syncvars!(to::MutOpt, from::MutOpt) = (copyto!(to.a, from.a); to)
+    OptimizationVariableInterface.ismutablevar(::Type{<:MutOpt}) = true
+    OptimizationVariableInterface.nvars(x::MutOpt) = length(x.a)
+
+    # (x, y, expected, is_tuple): y has the same type, different contents
+    cases = [
+        (Float64[1, 2], Float64[3, 4], true),
+        ([1.0 2.0; 3.0 4.0], [5.0 6.0; 7.0 8.0], true),
+        (MVector(1.0, 2.0), MVector(3.0, 4.0), true),
+        ([SVector(1.0, 2.0)], [SVector(3.0, 4.0)], true),
+        (SVector(1.0, 2.0), SVector(3.0, 4.0), false),
+        (1.0, 2.0, false),
+        (ZeroToInfScalar(1.0), ZeroToInfScalar(2.0), false),
+        (BoundedReal(0.5, 0.0, 1.0), BoundedReal(0.7, 0.0, 1.0), false),
+        (([1.0], [2.0]), ([3.0], [4.0]), true),
+        (([1.0], SVector(1.0)), ([3.0], SVector(2.0)), false),
+        ((a = [1.0], b = [2.0]), (a = [3.0], b = [4.0]), true),
+        ((([1.0], [2.0]), [3.0]), (([4.0], [5.0]), [6.0]), true),
+        ((([1.0], SVector(1.0)), [3.0]), (([4.0], SVector(2.0)), [6.0]), false),
+        (MutNoOpt([1.0]), MutNoOpt([2.0]), false),
+        (MutOpt([1.0]), MutOpt([2.0]), true),
+        (BoundedVector(SVector(0.5, 0.5), SVector(0.0, 0.0), SVector(1.0, 1.0)),
+         BoundedVector(SVector(0.6, 0.6), SVector(0.0, 0.0), SVector(1.0, 1.0)), false),
+        (BoundedVector([0.5, 0.5], [0.0, 0.0], [1.0, 1.0]),
+         BoundedVector([0.6, 0.6], [0.0, 0.0], [1.0, 1.0]), false),
+    ]
+    for (x, y, expected) in cases
+        @testset "$(typeof(x))" begin
+            @test ismutablevar(x) === expected
+            @test ismutablevar(typeof(x)) === expected
+            @test ismutablevar(x) == ismutablevar(typeof(x))
+            # defining property
+            c = copyvars(x)
+            r = syncvars!(c, y)
+            @test (r === c) == expected
+            if expected
+                @test !(x isa Tuple || x isa NamedTuple) ? c !== x : true
+            elseif !(x isa Tuple || x isa NamedTuple)
+                @test r === y
+                @test copyvars(x) === x
+            end
+        end
+    end
+    # mixed tuple: not in place, even though one element is copied
+    mx = ([1.0], SVector(1.0)); my = ([3.0], SVector(2.0))
+    c = copyvars(mx)
+    @test c !== mx && c[1] !== mx[1]
+    @test syncvars!(c, my) !== c
+
+    # misc truth-table entries
+    @test !ismutablevar(Float64) && !ismutablevar(Int) && !ismutablevar(SVector{0, Float64})
+    @test ismutablevar(Vector{Float64}()) && ismutablevar(Vector{Any})
+    @test ismutablevar(Vector{Union{SVector{2, Float64}, ZeroToInfScalar{Float64}}})
+    @test ismutablevar(Matrix{Float64}) && ismutablevar(MMatrix{2, 2, Float64, 4})
+    @test !ismutablevar(view([1.0, 2.0], 1:2))
+    @test ismutablevar(()) && !ismutablevar(ZeroToOneScalar(0.5))
+
+    # copyvars independence
+    v = [1.0, 2.0]; cv = copyvars(v); cv[1] = 9.0
+    @test v[1] == 1.0
+    t = ([1.0], [2.0]); ct = copyvars(t); ct[1][1] = 9.0
+    @test t[1][1] == 1.0
+
+    # round trip, as an optimizer does it
+    for x in (Float64[1, 2], ([1.0, 2.0], [3.0]), MutOpt([1.0, 2.0]))
+        c = copyvars(x)
+        step = fill(0.5, dynamic(nvars(x)))
+        n = update!(copyvars(x), x, step)
+        c0 = c
+        c = syncvars!(c, n)
+        ismutablevar(x) && @test c0 === c
+        @test (x isa MutOpt ? c.a == n.a : c == n)
+    end
+
+    # compile-time constant
+    g(x) = ismutablevar(x) ? 1 : 2.0
+    for x in (Float64[1], SVector(1.0), ([1.0], [2.0]), ([1.0], SVector(1.0)))
+        @inferred ismutablevar(x)
+        @inferred g(x)
+        ismutablevar(x); local a = @allocated ismutablevar(x)
+        @test a == 0
+    end
+end
+
 if Base.find_package("ManifoldsBase") !== nothing
     include("test_manifolds_base.jl")
 end

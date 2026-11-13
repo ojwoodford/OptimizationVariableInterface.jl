@@ -209,4 +209,19 @@ eye3() = [1.0 0.0 0.0; 0.0 1.0 0.0; 0.0 0.0 1.0]
     @test all(ts[i].point !== xs[i].point for i in 1:2)
     update!(ts, xs, fill(0.5, 18))
     @test all(xs[i].point == eye3() for i in 1:2)
+    # 12. ismutablevar
+    @testset "ismutablevar" begin
+        for byref in (false, true)
+            vm = ManifoldVar(eye3(), M_mat; byref = byref)
+            vs = ManifoldVar(SMatrix{3, 3}(eye3()), M_mat; byref = byref)
+            @test ismutablevar(vm) && !ismutablevar(vs)
+            @test ismutablevar([vm]) && ismutablevar([vs])
+            ym = ManifoldVar(2 .* eye3(), M_mat; byref = byref)
+            ys = ManifoldVar(SMatrix{3, 3}(2 .* eye3()), M_mat; byref = byref)
+            for (x, y, expected) in ((vm, ym, true), (vs, ys, false), ([vm], [ym], true), ([vs], [ys], true))
+                c = copyvars(x)
+                @test (syncvars!(c, y) === c) == expected
+            end
+        end
+    end
 end

@@ -10,7 +10,7 @@ StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 [compat]
 Aqua = "0.8"
 ForwardDiff = "0.10, 1"
-ManifoldsBase = "0.15"
+ManifoldsBase = "2"
 LinearAlgebra = "1"
 Static = "0.8.7, 1"
 Test = "1"

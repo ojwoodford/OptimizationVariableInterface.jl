@@ -220,7 +220,11 @@ eye3() = [1.0 0.0 0.0; 0.0 1.0 0.0; 0.0 0.0 1.0]
             ys = ManifoldVar(SMatrix{3, 3}(2 .* eye3()), M_mat; byref = byref)
             for (x, y, expected) in ((vm, ym, true), (vs, ys, false), ([vm], [ym], true), ([vs], [ys], true))
                 c = copyvars(x)
-                @test (syncvars!(c, y) === c) == expected
+                pts(v) = v isa Vector ? map(e -> e.point, v) : v.point
+                r = syncvars!(c, y)
+                @test pts(r) == pts(y)
+                @test (r === c) == expected
+                @test (pts(c) == pts(y)) == (expected || x isa Vector)
             end
         end
     end

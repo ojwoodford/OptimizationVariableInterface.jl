@@ -385,8 +385,9 @@ the result. When it is `false`, `x` is treated as an immutable value: `copyvars(
 This is not `Base.ismutable`. A tuple of mutable arrays is updated in place although a tuple is
 immutable; a `mutable struct` that has not opted in is not.
 
-The defining property: for `y` of the same type as `x` but with different contents,
-`ismutablevar(x) == (syncvars!(x, y) === x)`.
+The defining property: for `y` of the same type as `x` but with different contents, let `r = syncvars!(x, y)`.
+If `ismutablevar(x)`, then afterwards the caller's `x` itself holds `y`'s values, and `r === x`. Otherwise `x`
+is not fully updated (a value is left unchanged) and only `r` holds `y`'s values.
 
 A custom type with an in-place `update!` must define `copyvars`, `syncvars!` and
 `ismutablevar(::Type{<:MyType}) = true`.

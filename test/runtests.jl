@@ -428,6 +428,7 @@ end
     OptimizationVariableInterface.ismutablevar(::Type{<:MutOpt}) = true
     OptimizationVariableInterface.nvars(x::MutOpt) = length(x.a)
 
+    vals(x) = x isa Union{MutNoOpt, MutOpt} ? x.a : x isa Union{Tuple, NamedTuple} ? map(vals, x) : x
     # (x, y, expected, is_tuple): y has the same type, different contents
     cases = [
         (Float64[1, 2], Float64[3, 4], true),
@@ -455,15 +456,18 @@ end
             @test ismutablevar(x) === expected
             @test ismutablevar(typeof(x)) === expected
             @test ismutablevar(x) == ismutablevar(typeof(x))
-            # defining property
-            c = copyvars(x)
-            r = syncvars!(c, y)
-            @test (r === c) == expected
+            # defining property, on the state of the caller's object (not just the return value)
+            c0 = copyvars(x)
+            before = deepcopy(vals(c0))
+            r = syncvars!(c0, y)
+            @test vals(r) == vals(y)                        # the result always holds y's values
             if expected
-                @test !(x isa Tuple || x isa NamedTuple) ? c !== x : true
-            elseif !(x isa Tuple || x isa NamedTuple)
-                @test r === y
-                @test copyvars(x) === x
+                @test r === c0                              # written in place and returned
+                @test vals(c0) == vals(y)                   # the caller's object holds the new values
+            else
+                @test vals(c0) != vals(y)                   # the caller's object does not hold them
+                (x isa Tuple || x isa NamedTuple) || @test vals(c0) == before   # a value is untouched
+                x isa Tuple || x isa NamedTuple || @test copyvars(x) === x
             end
         end
     end
@@ -471,7 +475,8 @@ end
     mx = ([1.0], SVector(1.0)); my = ([3.0], SVector(2.0))
     c = copyvars(mx)
     @test c !== mx && c[1] !== mx[1]
-    @test syncvars!(c, my) !== c
+    r = syncvars!(c, my)
+    @test r !== c && c[1] == my[1] && c != my   # mutable part written, immutable part cannot be
 
     # misc truth-table entries
     @test !ismutablevar(Float64) && !ismutablevar(Int) && !ismutablevar(SVector{0, Float64})
@@ -488,14 +493,19 @@ end
     @test t[1][1] == 1.0
 
     # round trip, as an optimizer does it
-    for x in (Float64[1, 2], ([1.0, 2.0], [3.0]), MutOpt([1.0, 2.0]))
+    for x in (Float64[1, 2], ([1.0, 2.0], [3.0]), MutOpt([1.0, 2.0]), SVector(1.0, 2.0), ([1.0], SVector(1.0)))
         c = copyvars(x)
         step = fill(0.5, dynamic(nvars(x)))
         n = update!(copyvars(x), x, step)
         c0 = c
         c = syncvars!(c, n)
-        ismutablevar(x) && @test c0 === c
-        @test (x isa MutOpt ? c.a == n.a : c == n)
+        @test vals(c) == vals(n)
+        if ismutablevar(x)
+            @test c0 === c                  # the object bound before the call...
+            @test vals(c0) == vals(n)       # ...holds the updated values
+        else
+            @test vals(c0) != vals(n)       # the caller's object was not updated
+        end
     end
 
     # runtime (non-folded) evaluation, so the folded method bodies are exercised and counted

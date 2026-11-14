@@ -16,7 +16,15 @@ makedocs(
     ),
     pages = [
         "Home" => "index.md",
-        "API Reference" => "api.md",
+        "Guide" => [
+            "Defining a variable type" => "guide/custom_variables.md",
+            "Collections of variables" => "guide/collections.md",
+            "In-place variable types" => "guide/mutable_variables.md",
+            "Built-in variable types" => "guide/builtin_types.md",
+            "ManifoldsBase integration" => "guide/manifolds.md",
+            "Using the interface in an optimizer" => "guide/writing_an_optimizer.md",
+        ],
+        "API reference" => "api.md",
     ],
 )
 

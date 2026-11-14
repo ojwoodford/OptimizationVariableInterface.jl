@@ -1,329 +1,51 @@
 # OptimizationVariableInterface.jl
 
+[![Documentation (stable)](https://img.shields.io/badge/docs-stable-blue.svg)](https://ojwoodford.github.io/OptimizationVariableInterface.jl/stable/)
+[![Documentation (dev)](https://img.shields.io/badge/docs-dev-blue.svg)](https://ojwoodford.github.io/OptimizationVariableInterface.jl/dev/)
 [![Build Status](https://github.com/ojwoodford/OptimizationVariableInterface.jl/actions/workflows/CI.yml/badge.svg?branch=main)](https://github.com/ojwoodford/OptimizationVariableInterface.jl/actions/workflows/CI.yml?query=branch%3Amain)
 [![codecov](https://codecov.io/gh/ojwoodford/OptimizationVariableInterface.jl/branch/main/graph/badge.svg)](https://codecov.io/gh/ojwoodford/OptimizationVariableInterface.jl)
 
-A lightweight, zero-overhead variable and manifold retraction interface for numerical and nonlinear optimization in Julia.
+A lightweight, zero-overhead variable and retraction interface for numerical and nonlinear optimization in Julia.
 
----
+In nonlinear optimization, the variables often do not live in a flat Euclidean space: they may be points on a manifold (rotations, poses, directions) or parameters confined to an interval. An optimizer computes a step in the **tangent space** of the variables and maps it back with a **retraction**. `OptimizationVariableInterface.jl` is the contract between variable representations and optimization algorithms: an optimizer works only with flat tangent vectors, sized by `nvars` and applied by `update`, with compile-time static sizes, allocation-free scratch buffers, and heterogeneous collections of variable blocks. [SecondOrderOptimization.jl](https://github.com/ojwoodford/SecondOrderOptimization.jl) and [NLLSModel.jl](https://github.com/ojwoodford/NLLSModel.jl) are built on it.
 
-## Purpose & Motivation
+## Installation
 
-In nonlinear optimization, decision variables often do not live in a standard flat Euclidean space $\mathbb{R}^n$. Instead, they may belong to non-Euclidean manifolds or constrained domains—such as 3D rotations ($SO(3)$), rigid-body poses ($SE(3)$), directions on a unit sphere ($S^2$), or strictly positive / interval-bounded physical parameters.
+```julia
+using Pkg
+Pkg.add("OptimizationVariableInterface")
+```
 
-On a manifold $\mathcal{M}$, moving in search directions cannot be done with simple vector addition ($x + \Delta x$). Instead, optimization algorithms compute a step vector $\Delta x$ in the **tangent space** $T_x\mathcal{M} \cong \mathbb{R}^d$ and map it back onto the manifold using a **retraction** (or exponential map):
-
-$$x_{k+1} = \mathcal{R}_x(\Delta x)$$
-
-`OptimizationVariableInterface.jl` provides the shared contract between **variable representations** and **optimization algorithms**:
-1. **Decouples solvers from representations**: Solvers (such as gradient descent, Gauss-Newton, or Levenberg-Marquardt) only operate on tangent vectors in $\mathbb{R}^n$ without needing knowledge of specific manifold geometries.
-2. **Zero-overhead & allocation-friendly**: Built for high performance, supporting compile-time static dimensions (`Static.jl`, `StaticArrays.jl`), allocation-free scratch buffers, and unified handling of both mutable arrays and immutable structs.
-3. **Composable variable blocks**: Automatically handles heterogeneous collections of variable blocks (e.g. camera poses, 3D landmarks, calibration parameters) as a single composite state.
-
-Packages such as [`SecondOrderOptimization.jl`](https://github.com/ojwoodford/SecondOrderOptimization.jl) and [`NLLSModel.jl`](https://github.com/ojwoodford/NLLSModel.jl) build upon this interface.
-
----
-
-## 1. Defining a Custom Variable Type
-
-To create a custom manifold or constrained variable, define your type and extend two methods:
-1. `OptimizationVariableInterface.nvars`: returns the intrinsic tangent-space dimensionality (degrees of freedom).
-2. `OptimizationVariableInterface.update`: computes the retraction step $\mathcal{R}_x(\Delta x)$.
-
-### Example: A 2D Rotation / Circle Angle ($S^1$)
-
-The circle $S^1$ has 1 degree of freedom, but angles wrap modulo $2\pi$:
+## Example: an angle on the circle
 
 ```julia
 using OptimizationVariableInterface, Static
 import OptimizationVariableInterface: nvars, update
 
-# Custom variable type: an angle on the circle S¹
 struct CircleAngle{T<:AbstractFloat}
     theta::T
 end
 
-# 1. Tangent space dimension (intrinsic degrees of freedom)
-# Returning `static(1)` allows compile-time sizing in static solvers
-nvars(::CircleAngle) = static(1)
-
-# 2. Retraction: step starts at `start` in the tangent step vector
+nvars(::CircleAngle) = static(1)   # one degree of freedom, known at compile time
 update(var::CircleAngle, step, start=1) = CircleAngle(mod2pi(var.theta + step[start]))
+
+update(CircleAngle(0.0), [pi])     # CircleAngle{Float64}(3.141592653589793)
 ```
 
-That's it! Your custom variable is now fully compatible with any optimizer or problem structure using `OptimizationVariableInterface.jl`.
+Any optimizer written against the interface can now optimize a `CircleAngle`, alone or as one block of a larger state.
 
-```julia
-angle = CircleAngle(0.0)
-nvars(angle) # static(1)
+## Documentation
 
-# Retract by a tangent step of π radians
-update(angle, [pi]) # CircleAngle(3.14159...)
-```
+The [documentation](https://ojwoodford.github.io/OptimizationVariableInterface.jl/dev/) covers:
 
-> **Why the `start` argument?**
-> In optimization algorithms with multiple variables, the tangent step $\Delta x$ is computed as a single concatenated vector. The solver passes the variable's slice offset via `start`, avoiding intermediate allocations.
+- [defining a variable type](https://ojwoodford.github.io/OptimizationVariableInterface.jl/dev/guide/custom_variables/) (`nvars`, `update`, and the fallbacks);
+- [collections of variables](https://ojwoodford.github.io/OptimizationVariableInterface.jl/dev/guide/collections/) (`Vector`, `SVector`, `Tuple`, `NamedTuple`);
+- [in-place variable types](https://ojwoodford.github.io/OptimizationVariableInterface.jl/dev/guide/mutable_variables/) (`update!`, `copyvars`, `syncvars!`, `ismutablevar`);
+- [built-in variable types](https://ojwoodford.github.io/OptimizationVariableInterface.jl/dev/guide/builtin_types/) (positive and bounded scalars, bounded vectors);
+- [ManifoldsBase integration](https://ojwoodford.github.io/OptimizationVariableInterface.jl/dev/guide/manifolds/) (`ManifoldVar`);
+- [using the interface in an optimizer](https://ojwoodford.github.io/OptimizationVariableInterface.jl/dev/guide/writing_an_optimizer/);
+- the [API reference](https://ojwoodford.github.io/OptimizationVariableInterface.jl/dev/api/).
 
-### Fallback for Types with `Base.length` and `Base.:+`
+## Licence
 
-If your custom variable type uses standard vector addition for its update, you don't even need to depend on or import `OptimizationVariableInterface.jl`! Any type implementing standard Julia methods:
-- `Base.length(x)`
-- `Base.:+(x, step::AbstractVector)`
-
-automatically works out of the box with the default fallbacks `nvars(x) = length(x)` and `update(var, step, start=1) = var + view(step, ...)`. You only need to explicitly define `OptimizationVariableInterface.nvars(::MyType) = static(N)` if you wish to provide a compile-time static dimension for static linear solvers, or `update` if your retraction is non-additive.
-
----
-
-## 2. Using Blocks of Heterogeneous Variables
-
-Real-world optimization problems often involve composite states with different variable types—for example, a camera angle ($S^1$), a 2D Euclidean translation ($\mathbb{R}^2$), and a positive scale parameter ($\mathbb{R}^+$).
-
-`OptimizationVariableInterface.jl` supports collections of variables out of the box in both dynamic (`Vector`) and compile-time static (`StaticVector` / `SVector`) forms:
-
-### Dynamic Collections (`Vector`)
-
-```julia
-using OptimizationVariableInterface, StaticArrays
-
-# Problem state combining different variable types:
-vars = [CircleAngle(0.0), SVector(1.0, 2.0), ZeroToInfScalar(1.0)]
-
-# Total tangent space dimension: 1 + 2 + 1 = 4
-n = nvars(vars) # 4
-
-# Suppose an optimizer computed a 4-dimensional tangent step:
-step = [0.1, 0.5, -0.5, log(2.0)]
-
-# Unified retraction: updates each block according to its individual nvars
-vars_next = copyvars(vars)
-update!(vars_next, vars, step)
-
-# vars_next[1] is CircleAngle(0.1)
-# vars_next[2] is SVector(1.5, 1.5)
-# vars_next[3] is ZeroToInfScalar(2.0)
-```
-
-### Static Collections (`SVector`) with Zero Heap Allocations
-
-When all variable blocks have compile-time static sizes, they can be grouped in an `SVector`. `nvars` constant-folds across the blocks to return a `StaticInt`, and `update` unrolls elementwise retraction with **zero heap allocations**:
-
-```julia
-# Static composite state: two bounded positive scalars
-svec = SVector(ZeroToInfScalar(1.0), ZeroToInfScalar(2.0))
-
-# Compile-time static dimension: static(1) + static(1) = static(2)
-nvars(svec) # static(2)
-
-# Unrolled retraction across blocks (0 allocations):
-svec_next = update(svec, SVector(log(2.0), log(3.0)))
-# svec_next[1] is ZeroToInfScalar(2.0)
-# svec_next[2] is ZeroToInfScalar(6.0)
-```
-
----
-
-## 3. How an Optimizer Uses the Interface
-
-Optimization solvers use five core functions to manage state, allocate buffers, and apply steps:
-
-- `nvars(x)`: Determines the dimension of the tangent space to size linear systems, gradients, or Hessian matrices.
-- `copyvars(x)`: Allocates scratch buffers for candidate states (zero allocations for immutable types; shallow copies for `isbits` vectors).
-- `update!(to, from, step)`: Retracts candidate variables along the tangent step.
-- `syncvars!(to, from)`: Synchronizes state when a step is accepted.
-- `ismutablevar(x)`: Whether `x` is updated in place, so an optimizer can decide between a mutating and a non-mutating entry point.
-
-### Example: A Minimal Manifold Newton Optimizer
-
-Here is a complete, working example showing how a second-order optimizer interacts with variables via the interface. Notice how `nvars(x0)` is used to size and preallocate the tangent gradient vector and Hessian matrix:
-
-```julia
-using OptimizationVariableInterface, LinearAlgebra
-
-"""
-    manifold_newton(fdf!, x0; max_iters=20, tol=1e-6)
-
-Optimizes problem state `x0` over an arbitrary manifold using Newton's method.
-`fdf!(H, g, x)` evaluates the objective and fills the tangent-space Hessian `H`
-and gradient `g` in-place.
-"""
-function manifold_newton(fdf!, x0; max_iters=20, tol=1e-6)
-    # 1. Use nvars to preallocate tangent-space Hessian and gradient
-    n = dynamic(nvars(x0))
-    g = zeros(Float64, n)
-    H = zeros(Float64, n, n)
-
-    # 2. Allocate variable buffers without unnecessary allocations
-    x = copyvars(x0)
-    x_next = copyvars(x0)
-
-    for iter in 1:max_iters
-        # Fill Hessian and gradient in-place in tangent space
-        cost = fdf!(H, g, x)
-        if norm(g) < tol
-            break
-        end
-
-        # Solve Newton step in tangent space: H * step = -g
-        step = -(H \ g)
-
-        # 3. Retraction step: x_next = x ⊕ step
-        # Always assign back: handles immutable structs and in-place vectors uniformly
-        x_next = update!(x_next, x, step)
-
-        # 4. Accept step: synchronize current state with candidate state
-        x = syncvars!(x, x_next)
-    end
-
-    return x
-end
-```
-
-Because `update!`, `copyvars`, and `syncvars!` handle immutable and mutable types transparently, this single optimizer function works seamlessly whether `x0` is:
-- A scalar `Float64`
-- A static vector `SVector{N, Float64}`
-- A standard dynamic `Vector{Float64}`
-- A custom manifold struct (like `CircleAngle`)
-- A heterogeneous `Vector` of variable blocks
-
-#### Running the Optimizer on `CircleAngle`:
-
-```julia
-# Minimize f(θ) = 1 - cos(θ - 1.0)
-# Tangent gradient: sin(θ - 1.0)
-# Tangent Hessian: cos(θ - 1.0)
-function cost_grad_hess!(H, g, a::CircleAngle)
-    d = a.theta - 1.0
-    g[1] = sin(d)
-    H[1, 1] = max(cos(d), 1e-4) # ensure positive curvature
-    return 1.0 - cos(d)
-end
-
-x_opt = manifold_newton(cost_grad_hess!, CircleAngle(0.2))
-# Result: CircleAngle(1.0)
-```
-
----
-
-## ManifoldsBase.jl Integration (`OVIManifoldsBaseExt`)
-
-For working with Riemannian manifolds defined in [`ManifoldsBase.jl`](https://github.com/JuliaManifolds/ManifoldsBase.jl) (or [`Manifolds.jl`](https://github.com/JuliaManifolds/Manifolds.jl)), `OptimizationVariableInterface.jl` provides an official package extension:
-
-```julia
-using OptimizationVariableInterface, ManifoldsBase
-```
-
-### `ManifoldVar` & `ManifoldContext`
-
-`ManifoldVar` wraps any point on an `AbstractManifold`, bridging manifold retractions to numerical optimization step vectors:
-
-```julia
-# A flat 3-dimensional manifold (3 degrees of freedom); any `AbstractManifold` works
-M = ManifoldsBase.DefaultManifold(3; parameter = :type)
-p = @SVector [1.0, 0.0, 0.0]
-
-# Wrap point with its manifold
-var = ManifoldVar(p, M)
-nvars(var) # static(3) (intrinsic degrees of freedom, always a compile-time constant)
-
-# Optimizer computes a 3D tangent step:
-step = [0.1, 0.2, -0.1]
-var_new = update(var, step)
-```
-
-`ManifoldContext(manifold; basis, retraction, pointtype)` bundles the manifold, tangent basis, retraction and the manifold dimension (stored as a `StaticInt`, which is why `nvars` of a `ManifoldVar` is always static). It always returns a `ManifoldContext`; use `manifoldcontext(manifold; byref)` (below) to choose by-value or by-reference storage.
-
-### Zero Manifold Duplication: By-Value vs. By-Reference Storage
-
-When thousands of variables share the same manifold (e.g. camera poses or landmarks):
-- **By-Value (`byref = false`)**: For 0-byte singleton manifolds (`parameter = :type`) or small `isbits` manifolds ($\le 16$ bytes), the manifold context is stored directly inline with zero pointer indirection.
-- **By-Reference (`byref = true`)**: For larger or non-`isbits` manifolds, the manifold, basis, and retraction are bundled into a single `Base.RefValue`. Each variable stores **only one 8-byte pointer**, sharing the single heap-allocated manifold instance.
-
-`ManifoldVar(point, manifold)` and `manifoldcontext(manifold)` automatically select the optimal strategy (`byref = (!isbitstype(C) || sizeof(C) > 16)`), or you can specify it explicitly:
-
-```julia
-# Explicitly share a single context across 10,000 points:
-ctx = manifoldcontext(M; byref = true)
-vars = [ManifoldVar(points[i], ctx) for i in 1:10000]
-
-# All variables share the exact same context reference:
-vars[1].context === vars[2].context # true
-
-# copyvars creates new scratch buffers without deepcopying the shared manifold:
-vars_copy = copyvars(vars)
-vars_copy[1].context === ctx # true
-```
-
----
-
-## Built-in Variable Types
-
-| Type | Tangent Dim (`nvars`) | Retraction Behavior |
-| :--- | :--- | :--- |
-| `Number` | `static(1)` | Standard scalar addition: $x + \Delta x$ |
-| `StaticVector{N, <:Number}` | `static(N)` | Direct vector addition with `StaticArrays.jl` |
-| `StaticVector{N, T}` | $\sum \text{nvars}$ (`StaticInt` if static) | Unrolled block retraction across elements (0 heap allocations) |
-| `Tuple` / `NamedTuple` | $\sum \text{nvars}$ (`StaticInt` if all blocks are static) | Unrolled block retraction; returns a new tuple of the same shape. A zero-allocation container for a few differently typed blocks |
-| `Vector{<:Number}` | `length(v)` | In-place vector addition |
-| `Vector{T}` (blocks) | $\sum \text{nvars}$ | Block retraction across elements |
-| `ZeroToInfScalar{T}(val)` | `static(1)` | Constrained to $(0, \infty)$; stores `log(val)` and caches `val`, so retraction is exact: $x \cdot e^{\Delta x}$ |
-| `ZeroToOneScalar{T}(val)` | `static(1)` | Constrained to $(0, 1)$; stores the logit and caches `val` and `comp = 1 - val`; retraction adds to the logit |
-| `BoundedReal{T,B}(val, lo, hi)` | `static(1)` | Constrained to $(lo, hi)$; same logit state as `ZeroToOneScalar`, bounds stored as fields |
-| `BoundedVector{V,B}(val, lo, hi)` | `static(N)` for static storage, else `N` | Per-component bounds; `val` can be an `SVector`, `Vector`, `MVector`, ... and is used as the storage type |
-| `ManifoldVar{P, C}` | `static(manifold_dimension(M))` | Retracts point along tangent vector via `get_vector` and `retract` (needs `ManifoldsBase`) |
-| Fallback `Any` | `length(x)` | Retracts via `x + @inbounds(view(step, ...))` |
-
-### Bounded variables
-
-The bounded types store an unconstrained **state** (the log or the logit) and cache the derived value, so a retraction is one exact addition in the state and the result can never leave the interval, however large the step:
-
-```julia
-w = ZeroToOneScalar(0.5)        # w.val == 0.5, w.comp == 0.5 (comp = 1 - val, accurate near 1)
-update(w, [1000.0]).val         # 1.0 (saturated), but update(update(w, [1000.0]), [-1000.0]).val ≈ 0.5
-
-r = BoundedReal(2.0, 1.0, 5.0)  # value 2.0 in (1, 5)
-update(r, [0.3]).val            # stays strictly inside (1, 5)
-distlo(r), disthi(r)            # accurate distances to each bound
-
-# Per-component bounds; the storage type follows the first argument
-bv = BoundedVector(SVector(0.2, 3.0), [0.0, 1.0], [1.0, 5.0])   # static storage, nvars == static(2)
-bd = BoundedVector([0.2, 3.0], 0.0, 5.0)                         # Vector storage, scalar bounds
-update(bv, SVector(0.1, -0.1)).val
-```
-
-- Construction always takes a *value*, including the parameterized forms (`ZeroToInfScalar{Float32}(2.0)`, `BoundedReal{Float64,Float64}(v, lo, hi)`). The raw state (log / logit) is only reachable through the tagged form, e.g. `ZeroToOneScalar(z, Val(:logit))`, `ZeroToInfScalar(z, Val(:log))`, `BoundedReal(z, lo, hi, Val(:logit))`; read it back from the `logval` / `logit` fields.
-- The constructors clamp the value to the open interval, so a value on a bound gives a finite state. `NaN` propagates rather than being masked.
-- Bounds are never reached: the derivative of `val` with respect to the step is $(hi - lo)\,p(1-p)$, so an optimum lying on a bound is approached slowly rather than becoming active.
-- Bounds are fields (not type parameters), so they can be set at run time. `update` is out-of-place and shares `lo`/`hi` with the original.
-- `update` is autodiff-friendly: with a `ForwardDiff.Dual` step, the state and cached values become duals while the bounds stay plain numbers.
-
-**Operator forwarding.** `ZeroToInfScalar`, `ZeroToOneScalar`, `BoundedReal` and `BoundedVector` forward the standard arithmetic, comparison and math functions (`+`, `-`, `*`, `/`, `^`, `sin`, `exp`, `<`, `==`, `≈`, ...) to their cached `val`, so they can be used directly in residual code (`w * x`, `sin(w)`). The result is a plain number (or vector), not a wrapper. Note `==` and `<` compare `val` only. `BoundedVector` also forwards indexing, iteration, reductions and broadcasting (`sin.(bv)`), and `dot`, `cross`, `norm` and `normalize` when `LinearAlgebra` is loaded (package extension `OVILinearAlgebraExt`).
-
----
-
-## Interface Reference
-
-| Method | Role | Invariant / Behavior |
-| :--- | :--- | :--- |
-| `nvars(x)` | Tangent dimension | Returns `StaticInt` or `Int` indicating intrinsic degrees of freedom. Falls back to `Base.length(x)`. |
-| `update(var, step, start=1)` | Out-of-place retraction | Returns new variable instance retracted along `step[start : start+nvars(var)-1]`. Falls back to `var + @inbounds(view(step, ...))` using `Base.:+`. |
-| `update!(to, from, step)` | Unified / in-place retraction | Mutates `to` in-place for `Vector`s; returns `update(from, step)` for immutables. Always use as `to = update!(to, from, step)`. |
-| `copyvars(x)` | Buffer allocation | Returns `x` for immutables (0 allocations); `copy` for mutable arrays (`Matrix`, `MVector`, ...) and for `Vector`s of `isbits` elements; per-element `copyvars` for other `Vector`s, `Tuple`s and `NamedTuple`s. |
-| `syncvars!(to, from)` | State synchronization | Copies in-place for mutable arrays (per-element for `Vector`s of non-isbits blocks); returns `from` for immutables; returns a tuple of per-element results for `Tuple`/`NamedTuple`. Always use as `to = syncvars!(to, from)`. |
-| `ismutablevar(x)` / `ismutablevar(T)` | In-place trait | Whether `syncvars!(x, y)` writes into `x` and returns `x`. Defining property: after `r = syncvars!(x, y)` (`y` of the same type), if `ismutablevar(x)` the caller's `x` itself holds `y`'s values and `r === x`; otherwise only `r` holds them. Not `Base.ismutable`: a tuple of `Vector`s is `true`, a `mutable struct` that has not opted in is `false`. |
-| `isbitsvartype(T)` | Type introspection | Returns `true` if `T` is an `isbitstype` `DataType` or a `Union` of `isbitstype` types. |
-| `iseliminable(V)` | Schur complement trait | Returns `static(true)` if variable type `V` can be eliminated (marginalized) in a Schur complement; defaults to `static(false)`. |
-
-### Contract for custom mutable variable types
-
-The fallbacks treat unknown types as immutable values, which is only correct while `update!` is out-of-place. A custom type that is updated **in place** (mutable, and not a `Vector`/`Matrix`/other `AbstractArray`) must also define `copyvars` (to allocate an independent scratch copy), `syncvars!` (to copy state into it) and `ismutablevar(::Type{<:MyType}) = true`, otherwise a rejected trial step would overwrite the current iterate.
-
-An in-place type therefore needs four methods (`update!`, `copyvars`, `syncvars!`, `ismutablevar`); an out-of-place type needs none of them.
-
-### Example: requiring in-place variables
-
-```julia
-function optimize!(x0, ...)
-    ismutablevar(x0) || throw(ArgumentError("optimize! needs variables it can update in place; $(typeof(x0)) is treated as an immutable value. Use optimize instead."))
-    ...
-end
-```
+MIT; see [LICENSE](LICENSE).

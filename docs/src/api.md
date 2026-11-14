@@ -1,6 +1,7 @@
 # API reference
 
 ```@docs
+OptimizationVariableInterface
 nvars
 update
 update!

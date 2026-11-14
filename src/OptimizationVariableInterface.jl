@@ -1,3 +1,19 @@
+"""
+    OptimizationVariableInterface
+
+The contract between the variables of an optimization problem and the optimizer that updates them.
+An optimizer computes a step in the tangent space of the variables, a flat vector of length
+[`nvars`](@ref), and asks the variables to apply it (a retraction), without knowing what they are:
+scalars, static or dynamic vectors, bounded parameters, points on a manifold, or collections of
+differently typed blocks of these.
+
+A variable type implements:
+- [`nvars`](@ref): the number of degrees of freedom (a `StaticInt` when it is fixed by the type);
+- [`update`](@ref): the out-of-place retraction along a slice of the step.
+
+A type that is updated in place implements, in addition, [`update!`](@ref), [`copyvars`](@ref),
+[`syncvars!`](@ref) and [`ismutablevar`](@ref). The trait [`iseliminable`](@ref) is optional.
+"""
 module OptimizationVariableInterface
 
 using Static, StaticArrays
@@ -14,17 +30,34 @@ SR(first, last) = StaticArrays.SUnitRange(dynamic(first), dynamic(last))
     nvars(v) -> StaticInt or Int
 
 Returns the intrinsic number of degrees of freedom (tangent-space dimension) of a variable or collection of variables.
-Falls back to `Base.length(v)` for custom types and generic arrays.
-For `StaticVector` and `Vector` collections of variable blocks, returns the sum of their individual degrees of freedom.
+
+A number has `static(1)`, and a `StaticVector` of numbers `static(N)`. For a `StaticVector`, `Vector`, `Tuple`
+or `NamedTuple` of variable blocks, returns the sum over the blocks: a `StaticInt` when every block's count is
+static and the container is static (`StaticVector`, `Tuple`, `NamedTuple`), otherwise an `Int`.
+
+**Fallback:** `nvars(x) = length(x)`, used for any type without its own method (generic arrays, and custom
+types that define `Base.length`).
+
+**A custom type** defines `nvars(::MyType)`, unless the fallback is right for it. Return a `StaticInt`
+(`static(N)`) when the count is fixed by the type, so that an optimizer can size its linear system at
+compile time.
 
 # Example
-```julia
-using OptimizationVariableInterface, StaticArrays
+```jldoctest
+julia> nvars(1.0)
+static(1)
 
-nvars(1.0) # static(1)
-nvars(@SVector [1.0, 2.0, 3.0]) # static(3)
-nvars(zeros(5)) # 5
-nvars(SVector(ZeroToInfScalar(1.0), ZeroToInfScalar(2.0))) # static(2)
+julia> nvars(@SVector [1.0, 2.0, 3.0])
+static(3)
+
+julia> nvars(zeros(5))
+5
+
+julia> nvars(SVector(ZeroToInfScalar(1.0), ZeroToInfScalar(2.0)))
+static(2)
+
+julia> nvars((1.0, SVector(1.0, 2.0)))
+static(3)
 ```
 """
 nvars(x) = length(x)
@@ -39,17 +72,30 @@ nvars(vars::Vector{<:Number}) = length(vars)
 """
     update(var, step, start=1) -> newvar
 
-Computes out-of-place retraction of `var` along tangent vector `step[start:start+nvars(var)-1]`.
-Falls back to `var + @inbounds(view(step, ...))` using `Base.:+` if not explicitly defined.
-For `StaticVector` collections of variable blocks, unrolls retraction across each block with zero allocations.
+Computes the out-of-place retraction of `var` along the tangent vector `step[start:start+nvars(var)-1]`, and
+returns the new variable; `var` is not changed. `step` is the optimizer's whole step vector, and `start` is the
+index of `var`'s first element in it, so that no slice is allocated.
+
+For a `StaticVector`, `Tuple` or `NamedTuple` of variable blocks, updates each block from its own slice of
+`step`, in order, and returns a container of the same kind; for a `StaticVector` this is unrolled and does not
+allocate.
+
+**Fallback:** `update(var, step, start=1) = var + @inbounds(view(step, start:start+nvars(var)-1))`, used for
+any type without its own method. It is correct for a type whose retraction is addition and that defines
+`Base.:+(::MyType, ::AbstractVector)` (and `Base.length`, or [`nvars`](@ref)).
+
+**A custom type** whose retraction is not addition defines `update(var::MyType, step, start=1)`, reading only
+`step[start:start+nvars(var)-1]`.
 
 # Example
-```julia
-using OptimizationVariableInterface, StaticArrays
+```jldoctest
+julia> update(@SVector([1.0, 2.0]), @SVector([0.1, -0.1]))
+2-element SVector{2, Float64} with indices SOneTo(2):
+ 1.1
+ 1.9
 
-x = @SVector [1.0, 2.0]
-step = @SVector [0.1, -0.1]
-x_new = update(x, step)
+julia> update(1.0, [10.0, 0.5], 2)   # the slice starting at index 2
+1.5
 ```
 """
 update(var::Number, step, start=1) = var + @inbounds(step[start])
@@ -94,9 +140,35 @@ end
 """
     update!(to, from, step::AbstractVector) -> to
 
-Updates variable state `to` from `from` along tangent step `step`.
-For immutable variables, returns the updated immutable instance via [`update(from, step)`](@ref update).
-For mutable vectors (either flat `Vector{<:Number}` or `Vector` of variable blocks), mutates `to` in-place and returns `to`.
+Updates variable state `to` from `from` along the tangent step `step` (starting at `step[1]`), writing into
+`to` where it can. For a `Vector{<:Number}`, or a `Vector` of variable blocks (each element replaced by
+[`update`](@ref) of the corresponding element of `from`), mutates `to` in place and returns `to`.
+
+**Always use the return value**, as `to = update!(to, from, step)`: for an immutable variable `to` cannot
+be changed, and the result is returned instead.
+
+**Fallback:** `update!(to, from, step) = update(from, step)`, used for any type without its own method: `to`
+is ignored and the new value is returned. This is correct for every out-of-place type.
+
+**A custom type that is updated in place** defines `update!(to::MyType, from::MyType, step::AbstractVector)`,
+writing the result into `to` and returning `to`, and must then also define [`copyvars`](@ref),
+[`syncvars!`](@ref) and [`ismutablevar`](@ref).
+
+# Example
+```jldoctest
+julia> to = [0.0, 0.0];
+
+julia> update!(to, [1.0, 2.0], [0.5, 0.5]) === to   # written in place
+true
+
+julia> to
+2-element Vector{Float64}:
+ 1.5
+ 2.5
+
+julia> x = update!(1.0, 2.0, [0.5])   # immutable: only the returned value is updated
+2.5
+```
 """
 @inline update!(to, from, step::AbstractVector) = update(from, step)
 
@@ -139,7 +211,19 @@ end
 
 Positive scalar variable parameterized on `(0, Inf)` via multiplicative exponential retraction.
 The state is stored as `logval = log(val)`, so retraction is one exact addition; `val = exp(logval)`
-is cached (clamped to `[floatmin, floatmax]`). `NaN` propagates.
+is cached (clamped to `[floatmin, floatmax]`). A step `s` multiplies the value by `exp(s)`. The constructor
+takes the value; `ZeroToInfScalar(z, Val(:log))` takes the state. `NaN` propagates.
+
+# Example
+```jldoctest
+julia> x = ZeroToInfScalar(2.0);
+
+julia> x.val
+2.0
+
+julia> update(x, [log(3.0)]).val
+6.0
+```
 """
 struct ZeroToInfScalar{T}
     logval::T   # source of truth
@@ -164,7 +248,19 @@ update(var::ZeroToInfScalar, updatevec, start=1) = ZeroToInfScalar(var.logval + 
 
 Bounded scalar variable parameterized on the open interval `(0, 1)` via logistic retraction
 (`logit(p') = logit(p) + step`). The state is stored as `logit`; `val = p` and `comp = 1 - p` are
-cached and computed without cancellation, so both are accurate near either end. `NaN` propagates.
+cached and computed without cancellation, so both are accurate near either end. The constructor takes the
+value (clamped to the open interval); `ZeroToOneScalar(z, Val(:logit))` takes the state. `NaN` propagates.
+
+# Example
+```jldoctest
+julia> w = update(ZeroToOneScalar(0.5), [40.0]);
+
+julia> w.val, w.comp   # comp = 1 - val, accurate where val rounds to 1
+(1.0, 4.248354255291589e-18)
+
+julia> update(w, [-40.0]).val   # the state is exact, so the step is undone
+0.5
+```
 """
 struct ZeroToOneScalar{T}
     logit::T   # source of truth
@@ -199,11 +295,30 @@ end
 
 Scalar variable bounded to the open interval `(lo, hi)` (finite `lo < hi`), using the same logit
 state as [`ZeroToOneScalar`](@ref): `val = lo + (hi - lo)·p` with `p = logistic(logit)`.
-`val` is cached and measured from the nearer bound, so it stays accurate and strictly inside the
-interval. The bounds `lo` and `hi` are fields (never optimized, copied unchanged by [`update`](@ref)).
+`val` is cached and measured from the nearer bound, so it is accurate near both ends. The bounds `lo` and
+`hi` are fields (never optimized, copied unchanged by [`update`](@ref)).
 
-Note that the bounds are never reached, and the derivative of `val` with respect to the step is
-`(hi - lo)·p(1 - p)`, so an optimum on a bound is approached slowly rather than becoming active.
+However large the step, the state stays finite and `val` never leaves `[lo, hi]`. In exact arithmetic the
+bounds are never reached; in floating point `val` rounds to a bound once the distance to it is below its
+spacing, while [`distlo`](@ref) and [`disthi`](@ref) stay positive and accurate. The derivative of `val` with
+respect to the step is `(hi - lo)·p(1 - p)`, so an optimum on a bound is approached slowly rather than
+becoming active.
+
+The constructor takes the value, clamped to the open interval, and throws an `ArgumentError` unless
+`lo` and `hi` are finite with `lo < hi`; `BoundedReal(z, lo, hi, Val(:logit))` takes the state. `NaN` propagates.
+
+# Example
+```jldoctest
+julia> r = BoundedReal(2.0, 1.0, 5.0);
+
+julia> r.val, distlo(r), disthi(r)
+(2.0, 1.0, 3.0)
+
+julia> r2 = update(r, [100.0]);
+
+julia> r2.val, disthi(r2)   # val has rounded to hi; the distance has not
+(5.0, 4.464091171224992e-43)
+```
 """
 struct BoundedReal{T, B <: Real}
     logit::T   # state: z, p = logistic(z)
@@ -234,14 +349,33 @@ nvars(::BoundedReal) = static(1)
 update(v::BoundedReal, δ, start=1) = BoundedReal(v.logit + @inbounds(δ[start]), v.lo, v.hi, Val(:logit))
 
 """
-    distlo(v::BoundedReal), disthi(v::BoundedReal)
+    distlo(v::BoundedReal)
 
-Accurate distance from `v.val` to the lower / upper bound, computed from the logit (one `exp` per call).
+Distance from the value of `v` to its lower bound, `v.val - v.lo`, computed from the logit (one `exp`) so
+that it is accurate, and positive, even where `v.val` has rounded to the bound. See also [`disthi`](@ref).
+
+# Example
+```jldoctest
+julia> distlo(BoundedReal(2.0, 1.0, 5.0))
+1.0
+```
 """
 function distlo(v::BoundedReal)
     p, _ = _logistic_pair(v.logit)
     return (v.hi - v.lo) * p
 end
+"""
+    disthi(v::BoundedReal)
+
+Distance from the value of `v` to its upper bound, `v.hi - v.val`, computed from the logit (one `exp`) so
+that it is accurate, and positive, even where `v.val` has rounded to the bound. See also [`distlo`](@ref).
+
+# Example
+```jldoctest
+julia> disthi(BoundedReal(2.0, 1.0, 5.0))
+3.0
+```
+"""
 function disthi(v::BoundedReal)
     _, q = _logistic_pair(v.logit)
     return (v.hi - v.lo) * q
@@ -253,8 +387,24 @@ end
 Vector variable with per-component open bounds `(lo[i], hi[i])`: the vector analogue of [`BoundedReal`](@ref).
 `val` is any `AbstractVector` (e.g. `SVector`, `Vector`, `MVector`) and is used as the storage type for
 the logit state and the cached values; `lo` and `hi` are vectors of the same length or scalars applied to
-every component. Bounds are never optimized and are shared (not copied) by [`update`](@ref), which is
-out-of-place. For a `StaticVector`, `nvars` is static.
+every component, and are stored in the same kind of container as `val`. Bounds are never optimized and are shared
+(not copied) by [`update`](@ref), which is out-of-place. For a `StaticVector`, `nvars` is static.
+
+Values are clamped to the open intervals, `NaN` propagates, and an `ArgumentError` is thrown unless every
+bound is finite with `lo[i] < hi[i]`. `BoundedVector(z, lo, hi, Val(:logit))` takes the state. A
+`BoundedVector` forwards indexing, iteration, reductions, broadcasting and arithmetic to its cached `val`,
+and `dot`, `cross`, `norm` and `normalize` when `LinearAlgebra` is loaded.
+
+# Example
+```jldoctest
+julia> bv = BoundedVector(SVector(0.2, 3.0), [0.0, 1.0], [1.0, 5.0]);
+
+julia> nvars(bv)
+static(2)
+
+julia> bv[2]
+3.0
+```
 """
 struct BoundedVector{V <: AbstractVector, B <: AbstractVector}
     logit::V   # state
@@ -369,7 +519,15 @@ Base.isapprox(a::AbstractArray, b::BoundedVector; kw...) = isapprox(a, b.val; kw
 """
     isbitsvartype(T) -> Bool
 
-Returns `true` if `T` is an `isbitstype` or a `Union` of `isbitstype` types.
+Returns `true` if `T` is an `isbitstype` `DataType` or a `Union` of `isbitstype` types. [`copyvars`](@ref) and
+[`syncvars!`](@ref) read it on a `Vector{T}` of variables: when it is `true` the elements are values, and the
+vector is copied in one go; otherwise each element is copied or synced with `copyvars` or `syncvars!`.
+
+# Example
+```jldoctest
+julia> isbitsvartype(SVector{3, Float64}), isbitsvartype(Union{Float64, Int}), isbitsvartype(Vector{Float64})
+(true, true, false)
+```
 """
 isbitsvartype(T) = T isa DataType ? isbitstype(T) : (T isa Union && isbitsvartype(T.a) && isbitsvartype(T.b))
 
@@ -389,8 +547,24 @@ The defining property: for `y` of the same type as `x` but with different conten
 If `ismutablevar(x)`, then afterwards the caller's `x` itself holds `y`'s values, and `r === x`. Otherwise `x`
 is not fully updated (a value is left unchanged) and only `r` holds `y`'s values.
 
-A custom type with an in-place `update!` must define `copyvars`, `syncvars!` and
+**Fallback:** `false` for any type without its own method. Mutable arrays are `true`, other arrays `false`;
+a `Tuple` or `NamedTuple` is `true` when every element is; a [`ManifoldVar`](@ref) is `true` when its point is.
+The result is a compile-time constant.
+
+**A custom type** with an in-place [`update!`](@ref) must define `copyvars`, `syncvars!` and
 `ismutablevar(::Type{<:MyType}) = true`.
+
+# Example
+```jldoctest
+julia> ismutablevar([1.0, 2.0]), ismutablevar(SVector(1.0, 2.0)), ismutablevar(MVector(1.0, 2.0))
+(true, false, true)
+
+julia> ismutablevar(([1.0], [2.0])), ismutablevar(([1.0], SVector(2.0)))
+(true, false)
+
+julia> ismutablevar(Ref(1.0))   # mutable, but not a variable type that has opted in
+false
+```
 """
 ismutablevar(x) = ismutablevar(typeof(x))
 ismutablevar(@nospecialize(::Type)) = false                                             # values, and types that have not opted in
@@ -414,11 +588,23 @@ Returns a copy of `vars` suitable as a scratch buffer:
   element with `copyvars` (so the policy is per-element and consistent with [`syncvars!`](@ref)).
 - For a `Tuple` or `NamedTuple` of variables, copies each element with `copyvars`.
 
-# Contract
-A variable type with an in-place `update!` (i.e. one that is mutable and not a `Vector`) must also define
-`copyvars` and `syncvars!`: the fallbacks treat unknown types as immutable values, which is only correct
-when `update!` is out-of-place. Such a type must also define `ismutablevar(::Type{<:MyType}) = true`
-(see [`ismutablevar`](@ref)), so that `ismutablevar(x) == (syncvars!(x, y) === x)` holds.
+**Fallback:** `copyvars(x) = x`, used for any type without its own method: the type is treated as an
+immutable value.
+
+**A custom type** with an in-place [`update!`](@ref) (one that is mutable and not an `AbstractArray`) must
+define `copyvars`, returning an independent copy, and also [`syncvars!`](@ref): the fallbacks treat unknown
+types as immutable values, which is only correct when `update!` is out-of-place. Such a type must also define
+`ismutablevar(::Type{<:MyType}) = true` (see [`ismutablevar`](@ref)), so that
+`ismutablevar(x) == (syncvars!(x, y) === x)` holds.
+
+# Example
+```jldoctest
+julia> x = [1.0, 2.0]; copyvars(x) !== x   # a new buffer
+true
+
+julia> s = SVector(1.0, 2.0); copyvars(s) === s   # a value: nothing to copy
+true
+```
 """
 copyvars(x) = x
 copyvars(x::AbstractArray) = ismutablevar(x) ? copy(x) : x
@@ -428,8 +614,34 @@ copyvars(t::Union{Tuple, NamedTuple}) = map(copyvars, t)
 """
     syncvars!(to, from) -> to
 
-Synchronizes variable buffer `to` with `from`. Returns `from` for immutable variables or copies elements in-place for mutable arrays.
-For a `Vector` of non-isbits variables each element is synced with `syncvars!`. For a `Tuple`/`NamedTuple`, returns the tuple of per-element results.
+Synchronizes the variable buffer `to` with `from`, so that afterwards the result holds `from`'s values. For a
+mutable array, copies `from` into `to` and returns `to`; for a `Vector` of non-isbits variables, each element
+is synced with `syncvars!` (per element, as [`copyvars`](@ref) copies them). For a `Tuple` or `NamedTuple`,
+returns the tuple of per-element results. For an immutable variable, returns `from`.
+
+**Always use the return value**, as `to = syncvars!(to, from)`: only when [`ismutablevar(to)`](@ref ismutablevar)
+is `to` itself updated.
+
+**Fallback:** `syncvars!(to, from) = from`, used for any type without its own method: the type is treated as
+an immutable value.
+
+**A custom type** with an in-place [`update!`](@ref) must define `syncvars!(to::MyType, from::MyType)`,
+copying `from`'s state into `to` and returning `to`, as well as `copyvars` and `ismutablevar`.
+
+# Example
+```jldoctest
+julia> to = [0.0, 0.0]; syncvars!(to, [1.0, 2.0]) === to
+true
+
+julia> to
+2-element Vector{Float64}:
+ 1.0
+ 2.0
+
+julia> x = syncvars!(SVector(0.0), SVector(1.0))   # immutable: only the returned value is synced
+1-element SVector{1, Float64} with indices SOneTo(1):
+ 1.0
+```
 """
 syncvars!(to, from) = from
 function syncvars!(to::AbstractArray, from::AbstractArray)
@@ -458,6 +670,17 @@ so that `nvars` of a manifold variable is always static) for a manifold variable
 When `ManifoldsBase` is loaded, `ManifoldContext(manifold, basis, retraction)` computes `dim` itself, and
 `ManifoldContext(manifold; basis=..., retraction=..., pointtype=...)` fills in defaults. Both always return a
 `ManifoldContext`; use [`manifoldcontext`](@ref) to choose between by-value and by-reference storage.
+The default `basis` is `DefaultOrthonormalBasis()`, and the default `retraction` is
+`default_retraction_method(manifold, pointtype)` if `pointtype` is given, otherwise
+`default_retraction_method(manifold)`.
+
+# Example
+```jldoctest; setup = :(using ManifoldsBase)
+julia> ctx = ManifoldContext(ManifoldsBase.DefaultManifold(3));
+
+julia> ctx.dim
+static(3)
+```
 """
 struct ManifoldContext{M, B, R, D}
     manifold::M
@@ -469,20 +692,53 @@ end
 """
     manifoldcontext(manifold; basis=..., retraction=..., pointtype=nothing, byref=nothing)
 
-Factory for a context to share between manifold variables. Returns a `ManifoldContext` stored by value
-(for small isbits contexts), or a `Base.RefValue{<:ManifoldContext}` for by-reference storage (larger or
-non-isbits contexts); `byref` forces the choice. If `pointtype` is given, the default retraction is
-`default_retraction_method(manifold, pointtype)`, otherwise `default_retraction_method(manifold)`.
-Defined in the `ManifoldsBase` extension.
+Factory for a context to share between manifold variables. Builds
+`ctx = ManifoldContext(manifold; basis, retraction, pointtype)` (see [`ManifoldContext`](@ref) for the
+defaults), and returns `ctx` itself, stored by value, or `Ref(ctx)`, a `Base.RefValue{<:ManifoldContext}`
+for by-reference storage. With `byref = nothing` (the default), by-reference is chosen when the context is
+not `isbits` or is larger than 16 bytes; `byref = true` or `false` forces the choice.
+
+Defined in the `ManifoldsBase` extension: it has methods only once `ManifoldsBase` is loaded.
+
+# Example
+```jldoctest; setup = :(using ManifoldsBase)
+julia> M = ManifoldsBase.DefaultManifold(3; parameter = :type);   # a 0-byte manifold
+
+julia> manifoldcontext(M) isa ManifoldContext
+true
+
+julia> manifoldcontext(M; byref = true) isa Base.RefValue{<:ManifoldContext}
+true
+```
 """
 function manifoldcontext end
 
 """
     ManifoldVar(point, context)
 
-Variable wrapper for a point on a manifold, with associated manifold, basis, and retraction context.
-When `ManifoldsBase` is loaded, constructors accepting an `AbstractManifold` are provided:
-`ManifoldVar(point, manifold; basis=..., retraction=..., byref=...)`.
+Variable wrapper for a point on a manifold, with its context: a [`ManifoldContext`](@ref) (by value) or a
+`Base.RefValue` of one (by reference), as returned by [`manifoldcontext`](@ref). Variables can share a context.
+
+When `ManifoldsBase` is loaded, `ManifoldVar(point, manifold; basis=..., retraction=..., byref=...)` builds the
+context too, with the default retraction for the type of `point`, and the methods of the interface are defined:
+[`nvars`](@ref) is the manifold dimension, always a `StaticInt`; [`update`](@ref) retracts the point along the
+tangent vector with coordinates `step[start:start+nvars-1]` in the context's basis; [`update!`](@ref),
+[`copyvars`](@ref) and [`syncvars!`](@ref) work in place when the point is a mutable array, and
+`ismutablevar(v) == ismutablevar(v.point)`.
+
+# Example
+```jldoctest; setup = :(using ManifoldsBase)
+julia> v = ManifoldVar(SVector(1.0, 0.0, 0.0), ManifoldsBase.DefaultManifold(3; parameter = :type));
+
+julia> nvars(v)
+static(3)
+
+julia> update(v, [0.1, 0.2, -0.1]).point
+3-element SVector{3, Float64} with indices SOneTo(3):
+  1.1
+  0.2
+ -0.1
+```
 """
 struct ManifoldVar{P, C}
     point::P
@@ -501,13 +757,20 @@ Base.convert(::Type{ManifoldVar{P, C}}, v::ManifoldVar) where {P, C} =
     iseliminable(::Type{V}) -> StaticBool
 
 Returns `static(true)` if variable type `V` is structurally eligible for Schur complement elimination
-(marginalization in bipartite factor graphs like Bundle Adjustment / SLAM).
-Defaults to `static(false)`.
+(marginalization in bipartite problems such as bundle adjustment). Read by optimizers that eliminate
+variables, such as NLLSModel. `iseliminable(x)` is `iseliminable(typeof(x))`.
+
+**Fallback:** `static(false)`. **A custom type** opts in by defining
+`OptimizationVariableInterface.iseliminable(::Type{<:MyType}) = static(true)`.
 
 # Example
-```julia
-struct Landmark3D; x::SVector{3, Float64}; end
-OptimizationVariableInterface.iseliminable(::Type{<:Landmark3D}) = static(true)
+```jldoctest
+julia> struct Point3D; x::SVector{3, Float64}; end
+
+julia> OptimizationVariableInterface.iseliminable(::Type{<:Point3D}) = static(true)
+
+julia> iseliminable(Point3D(SVector(0.0, 0.0, 0.0))), iseliminable(1.0)
+(static(true), static(false))
 ```
 """
 iseliminable(::Type) = static(false)

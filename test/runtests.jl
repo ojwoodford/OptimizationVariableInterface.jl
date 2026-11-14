@@ -525,6 +525,8 @@ end
     end
 end
 
+include("publicapi.jl")
+
 if Base.find_package("ManifoldsBase") !== nothing
     include("test_manifolds_base.jl")
 end
